@@ -1,0 +1,17 @@
+[package]
+name = "imeswitch-macos"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+imeswitch-core.workspace = true
+anyhow.workspace = true
+log.workspace = true
+core-foundation = "0.10"
+core-foundation-sys = "0.8"
+core-graphics = "0.25"
+libc = "0.2"

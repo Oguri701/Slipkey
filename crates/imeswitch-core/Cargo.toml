@@ -1,0 +1,10 @@
+[package]
+name = "imeswitch-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]

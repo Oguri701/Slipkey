@@ -1,0 +1,18 @@
+[package]
+name = "imeswitchd"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "imeswitchd"
+path = "src/main.rs"
+
+[dependencies]
+imeswitch-core.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+imeswitch-macos.workspace = true
