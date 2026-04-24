@@ -52,6 +52,10 @@ impl StateMachine {
         self.state = State::Idle;
     }
 
+    pub fn is_idle(&self) -> bool {
+        matches!(self.state, State::Idle)
+    }
+
     /// Called on a physical keydown. The caller (platform hook) is responsible
     /// for acting on the returned `Response`.
     pub fn on_keydown(&mut self, key: Key) -> Response {

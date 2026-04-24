@@ -197,6 +197,40 @@ pub fn current_source_id() -> Option<String> {
     }
 }
 
+/// High-level classification of the active input source. We treat anything
+/// that isn't a pure keyboard layout as potentially composing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CurrentSourceKind {
+    /// A pure keyboard layout (ABC, Dvorak, Russian, …). No IME composition
+    /// is possible — safe to always grab triggers.
+    KeyboardLayout,
+    /// An input method or input mode (SCIM.Shuangpin, Kotoeri.Japanese, …).
+    /// Composition buffer may exist; see the composition-aware heuristic in
+    /// hook.rs before deciding whether to grab a trigger.
+    InputMethod,
+    /// Palette, dictation, etc. — neither layout nor IME in the usual sense.
+    Other,
+}
+
+pub fn current_source_kind() -> CurrentSourceKind {
+    unsafe {
+        let src = TISCopyCurrentKeyboardInputSource();
+        if src.is_null() {
+            return CurrentSourceKind::Other;
+        }
+        let owned: CFType = CFType::wrap_under_create_rule(src as CFTypeRef);
+        match read_str(owned.as_CFTypeRef(), kTISPropertyInputSourceType).as_deref() {
+            Some("TISTypeKeyboardLayout") => CurrentSourceKind::KeyboardLayout,
+            Some("TISTypeKeyboardInputMode")
+            | Some("TISTypeKeyboardInputMethodWithoutModes")
+            | Some("TISTypeKeyboardInputMethodModeEnabled") => {
+                CurrentSourceKind::InputMethod
+            }
+            _ => CurrentSourceKind::Other,
+        }
+    }
+}
+
 unsafe fn read_str(src: CFTypeRef, key: CFStringRef) -> Option<String> {
     let val_ptr = TISGetInputSourceProperty(src as *const c_void, key);
     if val_ptr.is_null() {
