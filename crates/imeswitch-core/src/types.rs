@@ -1,7 +1,7 @@
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum Language {
     En,
-    Jp,
+    Ja,
     Zh,
 }
 

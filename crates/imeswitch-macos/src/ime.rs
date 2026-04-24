@@ -71,7 +71,7 @@ impl std::error::Error for SwitchError {}
 #[derive(Debug, Clone)]
 pub struct Mapping {
     pub en: &'static str,
-    pub jp: &'static str,
+    pub ja: &'static str,
     pub zh: &'static str,
 }
 
@@ -79,7 +79,7 @@ impl Default for Mapping {
     fn default() -> Self {
         Self {
             en: "com.apple.keylayout.ABC",
-            jp: "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese",
+            ja: "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese",
             zh: "com.apple.inputmethod.SCIM.Shuangpin",
         }
     }
@@ -101,7 +101,7 @@ impl ImeSwitcher {
     pub fn switch_to(&self, lang: Language) -> Result<(), SwitchError> {
         let id = match lang {
             Language::En => self.mapping.en,
-            Language::Jp => self.mapping.jp,
+            Language::Ja => self.mapping.ja,
             Language::Zh => self.mapping.zh,
         };
         self.select_by_id(id)

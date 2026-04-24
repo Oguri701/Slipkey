@@ -1,5 +1,6 @@
 #![cfg(target_os = "macos")]
 
+pub mod config;
 pub mod dispatch;
 pub mod hook;
 pub mod ime;

@@ -96,7 +96,7 @@ impl StateMachine {
             }
             (State::AfterJ, Key::A) => {
                 self.state = State::Idle;
-                Response::switch(Language::Jp)
+                Response::switch(Language::Ja)
             }
             (State::AfterZ, Key::H) => {
                 self.state = State::Idle;
@@ -176,7 +176,7 @@ mod tests {
     fn full_trigger_ja() {
         let mut sm = StateMachine::new();
         let r = feed(&mut sm, &[Key::Leader, Key::J, Key::A]);
-        assert_eq!(r.switch, Some(Language::Jp));
+        assert_eq!(r.switch, Some(Language::Ja));
         assert!(r.suppress);
     }
 
@@ -259,7 +259,7 @@ mod tests {
         );
         assert_eq!(
             feed(&mut sm, &[Key::Leader, Key::J, Key::A]).switch,
-            Some(Language::Jp)
+            Some(Language::Ja)
         );
         // Confirm the old `;jp` sequence no longer triggers.
         let mut sm2 = StateMachine::new();
