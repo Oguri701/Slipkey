@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::types::{Key, Language};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,6 +21,7 @@ impl Response {
             switch: None,
         }
     }
+
     fn suppress() -> Self {
         Self {
             suppress: true,
@@ -26,13 +29,15 @@ impl Response {
             switch: None,
         }
     }
-    fn switch(lang: Language) -> Self {
+
+    fn switch_to(lang: Language) -> Self {
         Self {
             suppress: true,
             replay: Vec::new(),
             switch: Some(lang),
         }
     }
+
     fn cancel(replay: Vec<Key>) -> Self {
         Self {
             suppress: false,
@@ -42,131 +47,124 @@ impl Response {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum State {
-    Idle,
-    AfterLeader,
-    /// Saw `;e`, expecting `n`.
-    AfterE,
-    /// Saw `;j`, expecting `a`.
-    AfterJ,
-    /// Saw `;z`, expecting `h`.
-    AfterZ,
+#[derive(Clone, Debug, Default)]
+struct TrieNode {
+    children: HashMap<Key, usize>,
+    terminal: Option<Language>,
 }
 
 #[derive(Debug)]
 pub struct StateMachine {
-    state: State,
+    nodes: Vec<TrieNode>,
+    current: usize,
+    buffer: Vec<Key>,
 }
 
 impl StateMachine {
     pub fn new() -> Self {
-        Self { state: State::Idle }
+        Self::from_mappings([("en", "en"), ("ja", "ja"), ("zh", "zh")])
+    }
+
+    pub fn from_mappings<I, L, P>(mappings: I) -> Self
+    where
+        I: IntoIterator<Item = (L, P)>,
+        L: Into<Language>,
+        P: AsRef<str>,
+    {
+        let mut sm = Self {
+            nodes: vec![TrieNode::default()],
+            current: 0,
+            buffer: Vec::new(),
+        };
+
+        for (language, prefix) in mappings {
+            sm.insert_mapping(Language::from(language.into()), prefix.as_ref());
+        }
+
+        sm
+    }
+
+    pub fn insert_mapping(&mut self, language: Language, prefix: &str) {
+        if prefix.is_empty() {
+            return;
+        }
+
+        let mut node = 0;
+        for key in std::iter::once(Key::Leader).chain(prefix.chars().map(Key::alpha_num)) {
+            if matches!(key, Key::Other) {
+                return;
+            }
+
+            if let Some(next) = self.nodes[node].children.get(&key).copied() {
+                node = next;
+            } else {
+                let next = self.nodes.len();
+                self.nodes.push(TrieNode::default());
+                self.nodes[node].children.insert(key, next);
+                node = next;
+            }
+        }
+        self.nodes[node].terminal = Some(language);
     }
 
     pub fn reset(&mut self) {
-        self.state = State::Idle;
+        self.current = 0;
+        self.buffer.clear();
     }
 
     pub fn is_idle(&self) -> bool {
-        matches!(self.state, State::Idle)
+        self.current == 0
     }
 
     /// Called on a physical keydown. The caller (platform hook) is responsible
     /// for acting on the returned `Response`.
     pub fn on_keydown(&mut self, key: Key) -> Response {
-        match (self.state, key) {
-            // Start a sequence.
-            (State::Idle, Key::Leader) => {
-                self.state = State::AfterLeader;
-                Response::suppress()
-            }
-            // Anything else at idle: pass through.
-            (State::Idle, _) => Response::pass(),
-
-            // After leader, pick a language branch.
-            (State::AfterLeader, Key::E) => {
-                self.state = State::AfterE;
-                Response::suppress()
-            }
-            (State::AfterLeader, Key::J) => {
-                self.state = State::AfterJ;
-                Response::suppress()
-            }
-            (State::AfterLeader, Key::Z) => {
-                self.state = State::AfterZ;
-                Response::suppress()
-            }
-            // Second `;` while waiting — treat as restart.
-            (State::AfterLeader, Key::Leader) => {
-                // Flush the first `;`, start fresh with this one.
-                self.state = State::AfterLeader;
-                Response {
-                    suppress: true,
-                    replay: vec![Key::Leader],
-                    switch: None,
-                }
-            }
-            // Any other key: sequence aborted; replay `;` and let current pass.
-            (State::AfterLeader, _) => {
-                self.state = State::Idle;
-                Response::cancel(vec![Key::Leader])
-            }
-
-            // Complete triggers.
-            (State::AfterE, Key::N) => {
-                self.state = State::Idle;
-                Response::switch(Language::En)
-            }
-            (State::AfterJ, Key::A) => {
-                self.state = State::Idle;
-                Response::switch(Language::Ja)
-            }
-            (State::AfterZ, Key::H) => {
-                self.state = State::Idle;
-                Response::switch(Language::Zh)
-            }
-
-            // Second `;` mid-sequence: flush what we had, restart.
-            (State::AfterE, Key::Leader) => {
-                self.state = State::AfterLeader;
-                Response {
-                    suppress: true,
-                    replay: vec![Key::Leader, Key::E],
-                    switch: None,
-                }
-            }
-            (State::AfterJ, Key::Leader) => {
-                self.state = State::AfterLeader;
-                Response {
-                    suppress: true,
-                    replay: vec![Key::Leader, Key::J],
-                    switch: None,
-                }
-            }
-            (State::AfterZ, Key::Leader) => {
-                self.state = State::AfterLeader;
-                Response {
-                    suppress: true,
-                    replay: vec![Key::Leader, Key::Z],
-                    switch: None,
-                }
-            }
-
-            // Broken sequence: replay buffered, pass current.
-            (State::AfterE, _) => {
-                self.state = State::Idle;
-                Response::cancel(vec![Key::Leader, Key::E])
-            }
-            (State::AfterJ, _) => {
-                self.state = State::Idle;
-                Response::cancel(vec![Key::Leader, Key::J])
-            }
-            (State::AfterZ, _) => {
-                self.state = State::Idle;
-                Response::cancel(vec![Key::Leader, Key::Z])
-            }
+        if self.is_idle() {
+            return self.start_or_pass(key);
         }
+
+        if let Some(next) = self.nodes[self.current].children.get(&key).copied() {
+            return self.advance(next, key);
+        }
+
+        let replay = std::mem::take(&mut self.buffer);
+        self.current = 0;
+
+        if let Some(next) = self.nodes[0].children.get(&key).copied() {
+            self.buffer.push(key);
+            self.current = next;
+            return Response {
+                suppress: true,
+                replay,
+                switch: self.finish_if_terminal(),
+            };
+        }
+
+        Response::cancel(replay)
+    }
+
+    fn start_or_pass(&mut self, key: Key) -> Response {
+        if let Some(next) = self.nodes[0].children.get(&key).copied() {
+            self.advance(next, key)
+        } else {
+            Response::pass()
+        }
+    }
+
+    fn advance(&mut self, next: usize, key: Key) -> Response {
+        self.buffer.push(key);
+        self.current = next;
+        if let Some(language) = self.finish_if_terminal() {
+            Response::switch_to(language)
+        } else {
+            Response::suppress()
+        }
+    }
+
+    fn finish_if_terminal(&mut self) -> Option<Language> {
+        let language = self.nodes[self.current].terminal.clone()?;
+        self.reset();
+        Some(language)
     }
 }
 
@@ -180,6 +178,14 @@ impl Default for StateMachine {
 mod tests {
     use super::*;
 
+    fn k(value: char) -> Key {
+        Key::alpha_num(value)
+    }
+
+    fn lang(code: &str) -> Language {
+        Language::from(code)
+    }
+
     fn feed(sm: &mut StateMachine, keys: &[Key]) -> Response {
         let mut last = Response::pass();
         for k in keys {
@@ -191,7 +197,7 @@ mod tests {
     #[test]
     fn idle_passthrough() {
         let mut sm = StateMachine::new();
-        let r = sm.on_keydown(Key::E);
+        let r = sm.on_keydown(k('e'));
         assert!(!r.suppress);
         assert!(r.replay.is_empty());
         assert!(r.switch.is_none());
@@ -201,32 +207,53 @@ mod tests {
     fn full_trigger_en() {
         let mut sm = StateMachine::new();
         sm.on_keydown(Key::Leader);
-        sm.on_keydown(Key::E);
-        let r = sm.on_keydown(Key::N);
+        sm.on_keydown(k('e'));
+        let r = sm.on_keydown(k('n'));
         assert!(r.suppress);
-        assert_eq!(r.switch, Some(Language::En));
+        assert_eq!(r.switch, Some(lang("en")));
         assert!(r.replay.is_empty());
     }
 
     #[test]
     fn full_trigger_ja() {
         let mut sm = StateMachine::new();
-        let r = feed(&mut sm, &[Key::Leader, Key::J, Key::A]);
-        assert_eq!(r.switch, Some(Language::Ja));
+        let r = feed(&mut sm, &[Key::Leader, k('j'), k('a')]);
+        assert_eq!(r.switch, Some(lang("ja")));
         assert!(r.suppress);
     }
 
     #[test]
     fn full_trigger_zh() {
         let mut sm = StateMachine::new();
-        let r = feed(&mut sm, &[Key::Leader, Key::Z, Key::H]);
-        assert_eq!(r.switch, Some(Language::Zh));
+        let r = feed(&mut sm, &[Key::Leader, k('z'), k('h')]);
+        assert_eq!(r.switch, Some(lang("zh")));
         assert!(r.suppress);
     }
 
     #[test]
+    fn custom_language_prefixes_trigger() {
+        let mut sm = StateMachine::from_mappings([("fr", "fr"), ("ko", "ko")]);
+        let r = feed(&mut sm, &[Key::Leader, k('f'), k('r')]);
+        assert_eq!(r.switch, Some(lang("fr")));
+
+        let r = feed(&mut sm, &[Key::Leader, k('k'), k('o')]);
+        assert_eq!(r.switch, Some(lang("ko")));
+    }
+
+    #[test]
+    fn long_prefix_does_not_trigger_early() {
+        let mut sm = StateMachine::from_mappings([("en", "eng")]);
+        assert!(feed(&mut sm, &[Key::Leader, k('e'), k('n')])
+            .switch
+            .is_none());
+        assert!(!sm.is_idle());
+
+        let r = sm.on_keydown(k('g'));
+        assert_eq!(r.switch, Some(lang("en")));
+    }
+
+    #[test]
     fn cancel_at_leader_branch() {
-        // `;x` → should replay `;` then pass `x`
         let mut sm = StateMachine::new();
         sm.on_keydown(Key::Leader);
         let r = sm.on_keydown(Key::Other);
@@ -237,35 +264,27 @@ mod tests {
 
     #[test]
     fn cancel_mid_sequence() {
-        // `;ex` with x = Other → replay `;e`, pass `x`
         let mut sm = StateMachine::new();
         sm.on_keydown(Key::Leader);
-        sm.on_keydown(Key::E);
-        let r = sm.on_keydown(Key::Other);
+        sm.on_keydown(k('e'));
+        let r = sm.on_keydown(k('k'));
         assert!(!r.suppress);
-        assert_eq!(r.replay, vec![Key::Leader, Key::E]);
+        assert_eq!(r.replay, vec![Key::Leader, k('e')]);
     }
 
     #[test]
     fn wrong_l2_for_j_cancels() {
-        // `;jz` → replay `;j`, pass `z` (z is not l1 in idle — it is! re-enters)
-        // So from Idle with z alone, z is Other from the machine's perspective
-        // Actually Key::Z *is* a recognized key; after cancel we go to Idle then
-        // the caller gets (;, j) in replay and the current `z` is... "passed".
-        // Pass semantics: the hook should let the OS see `z`.
         let mut sm = StateMachine::new();
         sm.on_keydown(Key::Leader);
-        sm.on_keydown(Key::J);
-        let r = sm.on_keydown(Key::Z);
+        sm.on_keydown(k('j'));
+        let r = sm.on_keydown(k('z'));
         assert!(!r.suppress);
-        assert_eq!(r.replay, vec![Key::Leader, Key::J]);
-        // State is back to Idle — next `z` would just be typed, next `;` starts fresh
-        assert_eq!(sm.state, State::Idle);
+        assert_eq!(r.replay, vec![Key::Leader, k('j')]);
+        assert!(sm.is_idle());
     }
 
     #[test]
     fn double_leader_restarts() {
-        // `;;` → first is suppressed, second suppresses and replays the first `;`
         let mut sm = StateMachine::new();
         let r1 = sm.on_keydown(Key::Leader);
         assert!(r1.suppress);
@@ -275,13 +294,19 @@ mod tests {
     }
 
     #[test]
+    fn leader_restarts_mid_sequence() {
+        let mut sm = StateMachine::new();
+        let r = feed(&mut sm, &[Key::Leader, k('e'), Key::Leader, k('j'), k('a')]);
+        assert_eq!(r.switch, Some(lang("ja")));
+    }
+
+    #[test]
     fn reset_clears_state() {
         let mut sm = StateMachine::new();
         sm.on_keydown(Key::Leader);
-        sm.on_keydown(Key::E);
+        sm.on_keydown(k('e'));
         sm.reset();
-        // After reset, `n` alone should just pass through, not trigger En.
-        let r = sm.on_keydown(Key::N);
+        let r = sm.on_keydown(k('n'));
         assert!(!r.suppress);
         assert!(r.switch.is_none());
     }
@@ -290,22 +315,22 @@ mod tests {
     fn sequential_triggers() {
         let mut sm = StateMachine::new();
         assert_eq!(
-            feed(&mut sm, &[Key::Leader, Key::E, Key::N]).switch,
-            Some(Language::En)
+            feed(&mut sm, &[Key::Leader, k('e'), k('n')]).switch,
+            Some(lang("en"))
         );
         assert_eq!(
-            feed(&mut sm, &[Key::Leader, Key::J, Key::A]).switch,
-            Some(Language::Ja)
+            feed(&mut sm, &[Key::Leader, k('j'), k('a')]).switch,
+            Some(lang("ja"))
         );
-        // Confirm the old `;jp` sequence no longer triggers.
+
         let mut sm2 = StateMachine::new();
         assert_eq!(
-            feed(&mut sm2, &[Key::Leader, Key::J, Key::Other]).switch,
+            feed(&mut sm2, &[Key::Leader, k('j'), Key::Other]).switch,
             None
         );
         assert_eq!(
-            feed(&mut sm, &[Key::Leader, Key::Z, Key::H]).switch,
-            Some(Language::Zh)
+            feed(&mut sm, &[Key::Leader, k('z'), k('h')]).switch,
+            Some(lang("zh"))
         );
     }
 }
