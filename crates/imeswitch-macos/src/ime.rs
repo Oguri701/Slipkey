@@ -246,6 +246,14 @@ pub struct SourceInfo {
     pub is_selectable: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetectedIME {
+    pub language: Language,
+    pub source_id: String,
+    pub name: String,
+    pub is_selectable: bool,
+}
+
 /// Dump every input source the system reports (enabled or not).
 pub fn list_all_sources() -> Vec<SourceInfo> {
     unsafe {
@@ -272,6 +280,36 @@ pub fn list_all_sources() -> Vec<SourceInfo> {
             })
             .collect()
     }
+}
+
+pub fn discover_installed_imes() -> Vec<DetectedIME> {
+    let mut detected = Vec::new();
+    for source in list_all_sources() {
+        if !source.is_enabled || !source.is_selectable {
+            continue;
+        }
+
+        for language in source
+            .languages
+            .iter()
+            .filter_map(|tag| iso_code_from_bcp47(tag))
+        {
+            detected.push(DetectedIME {
+                language,
+                source_id: source.id.clone(),
+                name: source.name.clone(),
+                is_selectable: source.is_selectable,
+            });
+        }
+    }
+    detected.sort_by(|a, b| {
+        a.language
+            .cmp(&b.language)
+            .then_with(|| a.name.cmp(&b.name))
+            .then_with(|| a.source_id.cmp(&b.source_id))
+    });
+    detected.dedup_by(|a, b| a.language == b.language && a.source_id == b.source_id);
+    detected
 }
 
 /// Ask the system for the CURRENTLY active keyboard input source ID.
@@ -350,3 +388,28 @@ unsafe fn read_string_array(src: CFTypeRef, key: CFStringRef) -> Option<Vec<Stri
     Some(array.iter().map(|value| value.to_string()).collect())
 }
 
+fn iso_code_from_bcp47(tag: &str) -> Option<Language> {
+    let code = tag
+        .split(['-', '_'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if code.len() == 2 && code.chars().all(|c| c.is_ascii_alphabetic()) {
+        Some(Language::from(code))
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bcp47_tags_map_to_iso_codes() {
+        assert_eq!(iso_code_from_bcp47("zh-Hans"), Some(Language::from("zh")));
+        assert_eq!(iso_code_from_bcp47("ja_JP"), Some(Language::from("ja")));
+        assert_eq!(iso_code_from_bcp47("fr"), Some(Language::from("fr")));
+        assert_eq!(iso_code_from_bcp47("root"), None);
+    }
+}

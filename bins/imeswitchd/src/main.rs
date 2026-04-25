@@ -173,6 +173,70 @@ fn init_config() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+fn wizard_config() -> anyhow::Result<()> {
+    use imeswitch_macos::config::{default_path, Config};
+    use imeswitch_macos::ime::{discover_installed_imes, Mapping, MappingEntry};
+    use std::collections::BTreeMap;
+
+    let path = default_path();
+    if path.exists() {
+        anyhow::bail!(
+            "{} already exists — refusing to overwrite; move it aside to rerun wizard",
+            path.display()
+        );
+    }
+
+    let detected = discover_installed_imes();
+    if detected.is_empty() {
+        anyhow::bail!("no enabled selectable input sources with language metadata were detected");
+    }
+
+    let mut by_language = BTreeMap::new();
+    for item in detected {
+        by_language
+            .entry(item.language.clone())
+            .or_insert_with(Vec::new)
+            .push(item);
+    }
+
+    let mut entries = Vec::new();
+    println!("# detected input sources");
+    for (language, candidates) in by_language {
+        println!();
+        println!("[{}]", language);
+        for (index, candidate) in candidates.iter().enumerate() {
+            let marker = if index == 0 { "*" } else { " " };
+            println!(
+                "{} {} ({}) {}",
+                marker, candidate.name, candidate.source_id, candidate.is_selectable
+            );
+        }
+        if let Some(first) = candidates.first() {
+            entries.push(MappingEntry {
+                language: language.clone(),
+                prefix: language.to_string(),
+                source: first.source_id.clone(),
+            });
+        }
+    }
+
+    let config = Config::from_mapping(&Mapping::new(entries));
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, toml::to_string_pretty(&config)?)?;
+    println!();
+    println!("wrote {}", path.display());
+    println!("review it, then restart imeswitchd.");
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn wizard_config() -> anyhow::Result<()> {
+    anyhow::bail!("wizard currently only supports macOS TIS input source discovery")
+}
+
 #[cfg(target_os = "windows")]
 fn init_config() -> anyhow::Result<()> {
     use imeswitch_windows::config::{default_path, Config};
@@ -197,6 +261,7 @@ fn print_usage() {
     eprintln!("  (none)  run the daemon (default)");
     eprintln!("  list    print all input sources / keyboard layouts known to the OS");
     eprintln!("  init    write a starter config file");
+    eprintln!("  wizard  detect enabled macOS input sources and write config v2");
 }
 
 fn main() {
@@ -232,6 +297,12 @@ fn main() {
             #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             {
                 eprintln!("init only supported on macOS and Windows");
+                std::process::exit(1);
+            }
+        }
+        Some("wizard") => {
+            if let Err(e) = wizard_config() {
+                eprintln!("wizard failed: {e:#}");
                 std::process::exit(1);
             }
         }

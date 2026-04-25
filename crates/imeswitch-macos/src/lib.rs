@@ -8,7 +8,9 @@ pub mod ime;
 pub mod keymap;
 
 pub use hook::{EventHook, HookError};
-pub use ime::{ImeSwitcher, Mapping, SwitchError, DEFAULT_LEADER};
+pub use ime::{
+    discover_installed_imes, DetectedIME, ImeSwitcher, Mapping, SwitchError, DEFAULT_LEADER,
+};
 
 /// Enter the current thread's CFRunLoop. Blocks until the runloop stops
 /// (e.g. process shutdown). Callers must install the `EventHook` first so

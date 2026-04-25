@@ -13,6 +13,7 @@ imeswitch-core.workspace = true
 anyhow.workspace = true
 log.workspace = true
 env_logger.workspace = true
+toml = "0.8"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 imeswitch-macos.workspace = true
