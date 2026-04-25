@@ -2,6 +2,7 @@
 fn run() -> anyhow::Result<()> {
     use imeswitch_core::Language;
     use imeswitch_macos::config::{self, LoadOutcome};
+    use imeswitch_macos::keymap::{leader_keycode_for, KC_SEMICOLON};
     use imeswitch_macos::{run_loop, EventHook, ImeSwitcher};
     use std::sync::Arc;
 
@@ -16,30 +17,36 @@ fn run() -> anyhow::Result<()> {
                 path.display()
             );
         }
+        LoadOutcome::Migrated {
+            path, backup_path, ..
+        } => {
+            log::info!(
+                "migrated {} to config v2; backup written to {}",
+                path.display(),
+                backup_path.display()
+            );
+        }
         LoadOutcome::ParseError { .. } => { /* already warned inside load */ }
     }
-    log::info!(
-        "mapping: en={} ja={} zh={}",
-        mapping.en,
-        mapping.ja,
-        mapping.zh
-    );
+    log::info!("mapping: {}", mapping.describe());
 
+    let trigger_mappings = mapping.trigger_mappings();
+    let leader_keycode = leader_keycode_for(mapping.leader()).unwrap_or(KC_SEMICOLON);
     let switcher = Arc::new(ImeSwitcher::with_mapping(mapping));
     let switcher_cb = switcher.clone();
-    let _hook = EventHook::install(move |lang: Language| {
+    let _hook = EventHook::install_with_mappings(leader_keycode, trigger_mappings, move |lang: Language| {
         let before = imeswitch_macos::ime::current_source_id();
-        let result = switcher_cb.switch_to(lang);
+        let result = switcher_cb.switch_to(&lang);
         let after = imeswitch_macos::ime::current_source_id();
         match result {
             Ok(()) => log::info!(
-                "switch {:?}: {} -> {}",
+                "switch {}: {} -> {}",
                 lang,
                 before.as_deref().unwrap_or("<none>"),
                 after.as_deref().unwrap_or("<none>"),
             ),
             Err(e) => log::error!(
-                "switch {:?} failed: {} (was: {})",
+                "switch {} failed: {} (was: {})",
                 lang,
                 e,
                 before.as_deref().unwrap_or("<none>"),
@@ -48,7 +55,7 @@ fn run() -> anyhow::Result<()> {
     })
     .map_err(|e| anyhow::anyhow!("hook install failed: {e}. Check System Settings → Privacy & Security → Accessibility and grant this binary permission, then relaunch."))?;
 
-    log::info!("imeswitchd running. Triggers: ;en ;ja ;zh. Press Ctrl-C to stop.");
+    log::info!("imeswitchd running. Press Ctrl-C to stop.");
     run_loop();
     Ok(())
 }
@@ -57,6 +64,7 @@ fn run() -> anyhow::Result<()> {
 fn run() -> anyhow::Result<()> {
     use imeswitch_core::Language;
     use imeswitch_windows::config::{self, LoadOutcome};
+    use imeswitch_windows::keymap::{leader_vk_for, VK_SEMICOLON};
     use imeswitch_windows::{run_loop, EventHook, ImeSwitcher};
     use std::sync::Arc;
 
@@ -71,30 +79,36 @@ fn run() -> anyhow::Result<()> {
                 path.display()
             );
         }
+        LoadOutcome::Migrated {
+            path, backup_path, ..
+        } => {
+            log::info!(
+                "migrated {} to config v2; backup written to {}",
+                path.display(),
+                backup_path.display()
+            );
+        }
         LoadOutcome::ParseError { .. } => { /* already warned inside load */ }
     }
-    log::info!(
-        "mapping: en={} ja={} zh={}",
-        mapping.en,
-        mapping.ja,
-        mapping.zh
-    );
+    log::info!("mapping: {}", mapping.describe());
 
+    let trigger_mappings = mapping.trigger_mappings();
+    let leader_vk = leader_vk_for(mapping.leader()).unwrap_or(VK_SEMICOLON);
     let switcher = Arc::new(ImeSwitcher::with_mapping(mapping));
     let switcher_cb = switcher.clone();
-    let _hook = EventHook::install(move |lang: Language| {
+    let _hook = EventHook::install_with_mappings(leader_vk, trigger_mappings, move |lang: Language| {
         let before = imeswitch_windows::ime::current_source_id();
-        let result = switcher_cb.switch_to(lang);
+        let result = switcher_cb.switch_to(&lang);
         let after = imeswitch_windows::ime::current_source_id();
         match result {
             Ok(()) => log::info!(
-                "switch {:?}: {} -> {}",
+                "switch {}: {} -> {}",
                 lang,
                 before.as_deref().unwrap_or("<none>"),
                 after.as_deref().unwrap_or("<none>"),
             ),
             Err(e) => log::error!(
-                "switch {:?} failed: {} (was: {})",
+                "switch {} failed: {} (was: {})",
                 lang,
                 e,
                 before.as_deref().unwrap_or("<none>"),
@@ -103,7 +117,7 @@ fn run() -> anyhow::Result<()> {
     })
     .map_err(|e| anyhow::anyhow!("hook install failed: {e}"))?;
 
-    log::info!("imeswitchd running. Triggers: ;en ;ja ;zh. Press Ctrl-C to stop.");
+    log::info!("imeswitchd running. Press Ctrl-C to stop.");
     run_loop();
     Ok(())
 }
@@ -117,11 +131,17 @@ fn run() -> anyhow::Result<()> {
 fn list_sources() {
     let sources = imeswitch_macos::ime::list_all_sources();
     println!("# {} input sources reported by TIS", sources.len());
-    println!("# id | category | type | enabled | selectable | name");
+    println!("# id | category | type | enabled | selectable | languages | name");
     for s in sources {
         println!(
-            "{}\t{}\t{}\t{}\t{}\t{}",
-            s.id, s.category, s.type_, s.is_enabled, s.is_selectable, s.name
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            s.id,
+            s.category,
+            s.type_,
+            s.is_enabled,
+            s.is_selectable,
+            s.languages.join(","),
+            s.name
         );
     }
 }

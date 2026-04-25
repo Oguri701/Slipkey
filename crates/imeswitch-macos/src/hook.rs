@@ -30,7 +30,9 @@ use crate::composition::{
     focused_composition_state, should_defer_for_composition, CompositionState,
 };
 use crate::ime::{current_source_kind, CurrentSourceKind};
-use crate::keymap::{key_to_keycode, keycode_to_key};
+use crate::keymap::{
+    key_to_keycode_with_leader, keycode_to_key_with_leader, KC_SEMICOLON,
+};
 
 /// How long after the last keystroke an IME is assumed to still hold a
 /// composition buffer. During this window we defer to the IME rather than
@@ -63,6 +65,7 @@ struct HookState {
     sm: StateMachine,
     last_keydown: Option<Instant>,
     possible_composition: bool,
+    leader_keycode: u16,
 }
 
 pub struct EventHook {
@@ -74,10 +77,38 @@ impl EventHook {
     where
         F: FnMut(Language) + Send + 'static,
     {
+        Self::install_with_state(StateMachine::new(), KC_SEMICOLON, on_switch)
+    }
+
+    pub fn install_with_mappings<F, I>(
+        leader_keycode: u16,
+        mappings: I,
+        on_switch: F,
+    ) -> Result<Self, HookError>
+    where
+        F: FnMut(Language) + Send + 'static,
+        I: IntoIterator<Item = (Language, String)>,
+    {
+        Self::install_with_state(
+            StateMachine::from_mappings(mappings),
+            leader_keycode,
+            on_switch,
+        )
+    }
+
+    fn install_with_state<F>(
+        state_machine: StateMachine,
+        leader_keycode: u16,
+        on_switch: F,
+    ) -> Result<Self, HookError>
+    where
+        F: FnMut(Language) + Send + 'static,
+    {
         let state = Arc::new(Mutex::new(HookState {
-            sm: StateMachine::new(),
+            sm: state_machine,
             last_keydown: None,
             possible_composition: false,
+            leader_keycode,
         }));
         let on_switch = Arc::new(Mutex::new(
             Box::new(on_switch) as Box<dyn FnMut(Language) + Send>
@@ -102,12 +133,13 @@ impl EventHook {
                     let flags = event.get_flags();
                     let now = Instant::now();
 
-                    let (idle_sm, last_kd, possible_composition) = {
+                    let (idle_sm, last_kd, possible_composition, leader_kc) = {
                         let guard = state.lock().unwrap();
                         (
                             guard.sm.is_idle(),
                             guard.last_keydown,
                             guard.possible_composition,
+                            guard.leader_keycode,
                         )
                     };
                     let ms_since_last_kd = last_kd.map(|t| now.duration_since(t).as_millis());
@@ -155,7 +187,7 @@ impl EventHook {
                         return CallbackResult::Keep;
                     }
 
-                    let key = event_key(keycode, flags);
+                    let key = event_key(keycode, flags, leader_kc);
 
                     let response = {
                         let mut guard = state.lock().unwrap();
@@ -171,7 +203,7 @@ impl EventHook {
                         resp
                     };
 
-                    if let Some(lang) = response.switch {
+                    if let Some(lang) = response.switch.clone() {
                         let mut callback = on_switch.lock().unwrap();
                         callback(lang);
                     }
@@ -185,7 +217,7 @@ impl EventHook {
                     );
 
                     for k in &response.replay {
-                        if let Some(kc) = key_to_keycode(*k) {
+                        if let Some(kc) = key_to_keycode_with_leader(*k, leader_kc) {
                             synth_post(kc);
                         }
                     }
@@ -222,11 +254,11 @@ fn has_blocking_modifier(flags: CGEventFlags) -> bool {
     flags.intersects(mask)
 }
 
-fn event_key(keycode: u16, flags: CGEventFlags) -> Key {
+fn event_key(keycode: u16, flags: CGEventFlags, leader_kc: u16) -> Key {
     if has_blocking_modifier(flags) {
         Key::Other
     } else {
-        keycode_to_key(keycode)
+        keycode_to_key_with_leader(keycode, leader_kc)
     }
 }
 
@@ -295,7 +327,20 @@ mod tests {
     #[test]
     fn shifted_leader_is_not_a_trigger_key() {
         assert_eq!(
-            event_key(KC_SEMICOLON, CGEventFlags::CGEventFlagShift),
+            event_key(KC_SEMICOLON, CGEventFlags::CGEventFlagShift, KC_SEMICOLON),
+            Key::Other
+        );
+    }
+
+    #[test]
+    fn custom_leader_keycode_drives_state_machine() {
+        let comma_kc = crate::keymap::leader_keycode_for(',').unwrap();
+        assert_eq!(
+            event_key(comma_kc, CGEventFlags::CGEventFlagNull, comma_kc),
+            Key::Leader
+        );
+        assert_eq!(
+            event_key(KC_SEMICOLON, CGEventFlags::CGEventFlagNull, comma_kc),
             Key::Other
         );
     }
@@ -357,6 +402,7 @@ mod tests {
             sm: StateMachine::new(),
             last_keydown: None,
             possible_composition: false,
+            leader_keycode: KC_SEMICOLON,
         };
 
         update_possible_composition(
@@ -384,6 +430,7 @@ mod tests {
             sm: StateMachine::new(),
             last_keydown: None,
             possible_composition: false,
+            leader_keycode: KC_SEMICOLON,
         };
 
         update_possible_composition(
@@ -411,6 +458,7 @@ mod tests {
             sm: StateMachine::new(),
             last_keydown: None,
             possible_composition: false,
+            leader_keycode: KC_SEMICOLON,
         };
 
         update_possible_composition(

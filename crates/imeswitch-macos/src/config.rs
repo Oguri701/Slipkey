@@ -1,57 +1,119 @@
 //! User-editable config at `$HOME/.config/imeswitch/config.toml`.
-//!
-//! Every field is optional — missing keys fall back to `Mapping::default()`,
-//! which targets the three Apple-bundled sources (ABC / Kotoeri Romaji
-//! Japanese / SCIM Shuangpin). Users on other IMEs (全拼, Rime, 搜狗, ATOK)
-//! replace the relevant string; `imeswitchd list` shows the legal IDs.
 
 use std::path::{Path, PathBuf};
 
+use imeswitch_core::Language;
 use serde::{Deserialize, Serialize};
 
-use crate::ime::Mapping;
+use crate::ime::{Mapping, MappingEntry, DEFAULT_LEADER};
+use crate::keymap::leader_keycode_for;
 
-#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct Config {
+    pub leader: Option<String>,
+    pub mappings: Option<Vec<MappingConfig>>,
     pub en: Option<String>,
     pub ja: Option<String>,
     pub zh: Option<String>,
 }
 
-impl Config {
-    /// Merge this config onto the built-in defaults to produce a full Mapping.
-    pub fn into_mapping(self) -> Mapping {
-        let mut m = Mapping::default();
-        if let Some(s) = self.en {
-            m.en = s;
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct MappingConfig {
+    pub language: String,
+    pub prefix: String,
+    pub source: String,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Self::from_mapping(&Mapping::default())
+    }
+}
+
+impl MappingConfig {
+    fn from_entry(entry: &MappingEntry) -> Self {
+        Self {
+            language: entry.language.to_string(),
+            prefix: entry.prefix.clone(),
+            source: entry.source.clone(),
         }
-        if let Some(s) = self.ja {
-            m.ja = s;
-        }
-        if let Some(s) = self.zh {
-            m.zh = s;
-        }
-        m
     }
 
-    /// A TOML-serialized template with sensible defaults filled in. Used by
-    /// `imeswitchd init` so users start from a working config rather than an
-    /// empty file.
+    fn into_entry(self) -> Option<MappingEntry> {
+        if self.language.len() != 2 || self.prefix.is_empty() {
+            return None;
+        }
+        if !self.prefix.chars().all(|c| c.is_ascii_alphanumeric()) {
+            return None;
+        }
+        Some(MappingEntry {
+            language: Language::from(self.language),
+            prefix: self.prefix.to_ascii_lowercase(),
+            source: self.source,
+        })
+    }
+}
+
+impl Config {
+    pub fn leader_char(&self) -> char {
+        self.leader
+            .as_deref()
+            .and_then(|s| s.chars().next())
+            .filter(|c| leader_keycode_for(*c).is_some())
+            .unwrap_or(DEFAULT_LEADER)
+    }
+
+    pub fn into_mapping(self) -> Mapping {
+        let leader = self.leader_char();
+        if let Some(mappings) = self.mappings {
+            let entries = mappings
+                .into_iter()
+                .filter_map(MappingConfig::into_entry)
+                .collect::<Vec<_>>();
+            if !entries.is_empty() {
+                return Mapping::with_leader(leader, entries);
+            }
+        }
+
+        let mut entries = Mapping::default().entries().to_vec();
+        for entry in &mut entries {
+            let override_source = match entry.language.as_str() {
+                "en" => self.en.as_ref(),
+                "ja" => self.ja.as_ref(),
+                "zh" => self.zh.as_ref(),
+                _ => None,
+            };
+            if let Some(source) = override_source {
+                entry.source = source.clone();
+            }
+        }
+        Mapping::with_leader(leader, entries)
+    }
+
+    pub fn is_legacy_v1(&self) -> bool {
+        self.mappings.is_none() && (self.en.is_some() || self.ja.is_some() || self.zh.is_some())
+    }
+
     pub fn template_toml() -> String {
-        let d = Mapping::default();
-        format!(
-            "# imeswitch config — edit to match your installed IMEs.\n\
-             # Use `imeswitchd list` to see every source's real ID.\n\
-             # Remove a line to fall back to the built-in default shown here.\n\
-             \n\
-             en = \"{en}\"\n\
-             ja = \"{ja}\"\n\
-             zh = \"{zh}\"\n",
-            en = d.en,
-            ja = d.ja,
-            zh = d.zh,
-        )
+        toml::to_string_pretty(&Config::default()).expect("default config serializes")
+    }
+
+    pub fn from_mapping(mapping: &Mapping) -> Self {
+        Self {
+            leader: Some(mapping.leader().to_string()),
+            mappings: Some(
+                mapping
+                    .entries()
+                    .iter()
+                    .map(MappingConfig::from_entry)
+                    .collect(),
+            ),
+            en: None,
+            ja: None,
+            zh: None,
+        }
     }
 }
 
@@ -63,6 +125,11 @@ pub enum LoadOutcome {
     },
     Missing {
         path: PathBuf,
+    },
+    Migrated {
+        path: PathBuf,
+        backup_path: PathBuf,
+        config: Config,
     },
     ParseError {
         path: PathBuf,
@@ -85,23 +152,47 @@ pub fn load_from(path: &Path) -> LoadOutcome {
             path: path.to_path_buf(),
         },
         Err(e) => {
-            // Treat unreadable (permission etc.) like missing so we never
-            // refuse to start; log the underlying error.
-            log::warn!("could not read {}: {} — using defaults", path.display(), e);
+            log::warn!("could not read {}: {} - using defaults", path.display(), e);
             LoadOutcome::Missing {
                 path: path.to_path_buf(),
             }
         }
         Ok(text) => match toml::from_str::<Config>(&text) {
-            Ok(c) => LoadOutcome::Loaded {
+            Ok(config) if config.is_legacy_v1() => migrate_v1(path, text, config),
+            Ok(config) => LoadOutcome::Loaded {
                 path: path.to_path_buf(),
-                config: c,
+                config,
             },
-            Err(e) => LoadOutcome::ParseError {
+            Err(error) => LoadOutcome::ParseError {
                 path: path.to_path_buf(),
-                error: e,
+                error,
             },
         },
+    }
+}
+
+fn migrate_v1(path: &Path, original_text: String, legacy: Config) -> LoadOutcome {
+    let mapping = legacy.into_mapping();
+    let config = Config::from_mapping(&mapping);
+    let backup_path = path.with_file_name("config.toml.v1.bak");
+
+    if let Err(error) = std::fs::write(&backup_path, original_text) {
+        log::warn!("could not write {}: {}", backup_path.display(), error);
+    }
+    if let Err(error) = std::fs::write(path, Config::template_toml_for(&config)) {
+        log::warn!("could not migrate {}: {}", path.display(), error);
+    }
+
+    LoadOutcome::Migrated {
+        path: path.to_path_buf(),
+        backup_path,
+        config,
+    }
+}
+
+impl Config {
+    fn template_toml_for(config: &Config) -> String {
+        toml::to_string_pretty(config).expect("config serializes")
     }
 }
 
@@ -111,11 +202,13 @@ pub fn load_or_default() -> (Mapping, LoadOutcome) {
     let path = default_path();
     let outcome = load_from(&path);
     let mapping = match &outcome {
-        LoadOutcome::Loaded { config, .. } => config.clone().into_mapping(),
+        LoadOutcome::Loaded { config, .. } | LoadOutcome::Migrated { config, .. } => {
+            config.clone().into_mapping()
+        }
         LoadOutcome::Missing { .. } => Mapping::default(),
         LoadOutcome::ParseError { path, error } => {
             log::warn!(
-                "{} is malformed: {} — ignoring, using defaults",
+                "{} is malformed: {} - ignoring, using defaults",
                 path.display(),
                 error
             );
@@ -134,31 +227,46 @@ mod tests {
         let c: Config = toml::from_str("").unwrap();
         let m = c.into_mapping();
         let d = Mapping::default();
-        assert_eq!(m.en, d.en);
-        assert_eq!(m.ja, d.ja);
-        assert_eq!(m.zh, d.zh);
+        assert_eq!(m, d);
     }
 
     #[test]
-    fn partial_config_only_overrides_given_keys() {
+    fn v2_config_supports_arbitrary_language() {
+        let c: Config = toml::from_str(
+            r#"
+leader = ";"
+
+[[mappings]]
+language = "fr"
+prefix = "fr"
+source = "com.apple.keylayout.French"
+"#,
+        )
+        .unwrap();
+        let m = c.into_mapping();
+        assert_eq!(
+            m.source_for(&Language::from("fr")),
+            Some("com.apple.keylayout.French")
+        );
+        assert_eq!(
+            m.trigger_mappings(),
+            vec![(Language::from("fr"), "fr".to_string())]
+        );
+    }
+
+    #[test]
+    fn legacy_config_overrides_defaults() {
         let c: Config = toml::from_str(r#"zh = "com.example.fake""#).unwrap();
         let m = c.into_mapping();
         let d = Mapping::default();
-        assert_eq!(m.en, d.en);
-        assert_eq!(m.ja, d.ja);
-        assert_eq!(m.zh, "com.example.fake");
-    }
-
-    #[test]
-    fn mapping_owns_configured_ids() {
-        let source = String::from("com.example.custom");
-        let c = Config {
-            en: Some(source.clone()),
-            ja: None,
-            zh: None,
-        };
-        let m = c.into_mapping();
-        assert_eq!(m.en, source);
+        assert_eq!(
+            m.source_for(&Language::from("en")),
+            d.source_for(&Language::from("en"))
+        );
+        assert_eq!(
+            m.source_for(&Language::from("zh")),
+            Some("com.example.fake")
+        );
     }
 
     #[test]
@@ -171,9 +279,39 @@ mod tests {
     fn template_round_trips() {
         let tpl = Config::template_toml();
         let c: Config = toml::from_str(&tpl).unwrap();
-        let d = Mapping::default();
-        assert_eq!(c.en.as_deref(), Some(d.en.as_str()));
-        assert_eq!(c.ja.as_deref(), Some(d.ja.as_str()));
-        assert_eq!(c.zh.as_deref(), Some(d.zh.as_str()));
+        assert_eq!(c.into_mapping(), Mapping::default());
+    }
+
+    #[test]
+    fn custom_leader_is_applied() {
+        let c: Config = toml::from_str(
+            r#"
+leader = ","
+
+[[mappings]]
+language = "en"
+prefix = "en"
+source = "com.apple.keylayout.ABC"
+"#,
+        )
+        .unwrap();
+        assert_eq!(c.leader_char(), ',');
+        assert_eq!(c.into_mapping().leader(), ',');
+    }
+
+    #[test]
+    fn unsupported_leader_falls_back_to_default() {
+        let c: Config = toml::from_str(
+            r#"
+leader = "$"
+
+[[mappings]]
+language = "en"
+prefix = "en"
+source = "com.apple.keylayout.ABC"
+"#,
+        )
+        .unwrap();
+        assert_eq!(c.leader_char(), DEFAULT_LEADER);
     }
 }

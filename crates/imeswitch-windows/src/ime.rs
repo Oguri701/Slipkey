@@ -2,6 +2,8 @@
 //!
 //! Public types mirror the macOS crate so the daemon glue can stay thin.
 
+use std::collections::HashMap;
+
 use imeswitch_core::Language;
 
 #[derive(Debug)]
@@ -32,19 +34,91 @@ impl std::fmt::Display for SwitchError {
 impl std::error::Error for SwitchError {}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MappingEntry {
+    pub language: Language,
+    pub prefix: String,
+    pub source: String,
+}
+
+pub const DEFAULT_LEADER: char = ';';
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mapping {
-    pub en: String,
-    pub ja: String,
-    pub zh: String,
+    leader: char,
+    entries: Vec<MappingEntry>,
+    sources: HashMap<Language, String>,
 }
 
 impl Default for Mapping {
     fn default() -> Self {
+        Self::new(vec![
+            MappingEntry {
+                language: Language::from("en"),
+                prefix: "en".to_string(),
+                source: "00000409".to_string(),
+            },
+            MappingEntry {
+                language: Language::from("ja"),
+                prefix: "ja".to_string(),
+                source: "00000411".to_string(),
+            },
+            MappingEntry {
+                language: Language::from("zh"),
+                prefix: "zh".to_string(),
+                source: "00000804".to_string(),
+            },
+        ])
+    }
+}
+
+impl Mapping {
+    pub fn new(entries: Vec<MappingEntry>) -> Self {
+        Self::with_leader(DEFAULT_LEADER, entries)
+    }
+
+    pub fn with_leader(leader: char, entries: Vec<MappingEntry>) -> Self {
+        let sources = entries
+            .iter()
+            .map(|entry| (entry.language.clone(), entry.source.clone()))
+            .collect();
         Self {
-            en: "00000409".to_string(),
-            ja: "00000411".to_string(),
-            zh: "00000804".to_string(),
+            leader,
+            entries,
+            sources,
         }
+    }
+
+    pub fn leader(&self) -> char {
+        self.leader
+    }
+
+    pub fn set_leader(&mut self, leader: char) {
+        self.leader = leader;
+    }
+
+    pub fn entries(&self) -> &[MappingEntry] {
+        &self.entries
+    }
+
+    pub fn source_for(&self, language: &Language) -> Option<&str> {
+        self.sources.get(language).map(String::as_str)
+    }
+
+    pub fn trigger_mappings(&self) -> Vec<(Language, String)> {
+        self.entries
+            .iter()
+            .map(|entry| (entry.language.clone(), entry.prefix.clone()))
+            .collect()
+    }
+
+    pub fn describe(&self) -> String {
+        let body = self
+            .entries
+            .iter()
+            .map(|entry| format!("{}:{}={}", entry.language, entry.prefix, entry.source))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("leader='{}' {}", self.leader, body)
     }
 }
 
@@ -63,12 +137,11 @@ impl ImeSwitcher {
         Self { mapping }
     }
 
-    pub fn switch_to(&self, lang: Language) -> Result<(), SwitchError> {
-        let id = match lang {
-            Language::En => &self.mapping.en,
-            Language::Ja => &self.mapping.ja,
-            Language::Zh => &self.mapping.zh,
-        };
+    pub fn switch_to(&self, lang: &Language) -> Result<(), SwitchError> {
+        let id = self
+            .mapping
+            .source_for(lang)
+            .ok_or_else(|| SwitchError::NotInstalled(lang.to_string()))?;
         select_layout(id)
     }
 }
@@ -191,8 +264,8 @@ mod tests {
     #[test]
     fn defaults_are_standard_win64_layout_ids() {
         let m = Mapping::default();
-        assert_eq!(m.en, "00000409");
-        assert_eq!(m.ja, "00000411");
-        assert_eq!(m.zh, "00000804");
+        assert_eq!(m.source_for(&Language::from("en")), Some("00000409"));
+        assert_eq!(m.source_for(&Language::from("ja")), Some("00000411"));
+        assert_eq!(m.source_for(&Language::from("zh")), Some("00000804"));
     }
 }

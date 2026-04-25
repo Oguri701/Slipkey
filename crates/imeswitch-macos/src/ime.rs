@@ -6,6 +6,7 @@
 //! Users on third-party IMEs (Rime, Sogou, ATOK) should swap the ids in a
 //! future `ImeSwitcher::with_mapping()` call — M2 concern.
 
+use std::collections::HashMap;
 use std::os::raw::c_void;
 
 use core_foundation::array::{CFArray, CFArrayRef};
@@ -43,6 +44,7 @@ extern "C" {
     static kTISPropertyInputSourceType: CFStringRef;
     static kTISPropertyInputSourceIsEnabled: CFStringRef;
     static kTISPropertyInputSourceIsSelectCapable: CFStringRef;
+    static kTISPropertyInputSourceLanguages: CFStringRef;
 }
 
 #[derive(Debug)]
@@ -74,20 +76,92 @@ impl std::fmt::Display for SwitchError {
 
 impl std::error::Error for SwitchError {}
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MappingEntry {
+    pub language: Language,
+    pub prefix: String,
+    pub source: String,
+}
+
+pub const DEFAULT_LEADER: char = ';';
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mapping {
-    pub en: String,
-    pub ja: String,
-    pub zh: String,
+    leader: char,
+    entries: Vec<MappingEntry>,
+    sources: HashMap<Language, String>,
 }
 
 impl Default for Mapping {
     fn default() -> Self {
+        Self::new(vec![
+            MappingEntry {
+                language: Language::from("en"),
+                prefix: "en".to_string(),
+                source: "com.apple.keylayout.ABC".to_string(),
+            },
+            MappingEntry {
+                language: Language::from("ja"),
+                prefix: "ja".to_string(),
+                source: "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese".to_string(),
+            },
+            MappingEntry {
+                language: Language::from("zh"),
+                prefix: "zh".to_string(),
+                source: "com.apple.inputmethod.SCIM.Shuangpin".to_string(),
+            },
+        ])
+    }
+}
+
+impl Mapping {
+    pub fn new(entries: Vec<MappingEntry>) -> Self {
+        Self::with_leader(DEFAULT_LEADER, entries)
+    }
+
+    pub fn with_leader(leader: char, entries: Vec<MappingEntry>) -> Self {
+        let sources = entries
+            .iter()
+            .map(|entry| (entry.language.clone(), entry.source.clone()))
+            .collect();
         Self {
-            en: "com.apple.keylayout.ABC".to_string(),
-            ja: "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese".to_string(),
-            zh: "com.apple.inputmethod.SCIM.Shuangpin".to_string(),
+            leader,
+            entries,
+            sources,
         }
+    }
+
+    pub fn leader(&self) -> char {
+        self.leader
+    }
+
+    pub fn set_leader(&mut self, leader: char) {
+        self.leader = leader;
+    }
+
+    pub fn entries(&self) -> &[MappingEntry] {
+        &self.entries
+    }
+
+    pub fn source_for(&self, language: &Language) -> Option<&str> {
+        self.sources.get(language).map(String::as_str)
+    }
+
+    pub fn trigger_mappings(&self) -> Vec<(Language, String)> {
+        self.entries
+            .iter()
+            .map(|entry| (entry.language.clone(), entry.prefix.clone()))
+            .collect()
+    }
+
+    pub fn describe(&self) -> String {
+        let body = self
+            .entries
+            .iter()
+            .map(|entry| format!("{}:{}={}", entry.language, entry.prefix, entry.source))
+            .collect::<Vec<_>>()
+            .join(" ");
+        format!("leader='{}' {}", self.leader, body)
     }
 }
 
@@ -106,12 +180,11 @@ impl ImeSwitcher {
         Self { mapping }
     }
 
-    pub fn switch_to(&self, lang: Language) -> Result<(), SwitchError> {
-        let id = match lang {
-            Language::En => &self.mapping.en,
-            Language::Ja => &self.mapping.ja,
-            Language::Zh => &self.mapping.zh,
-        };
+    pub fn switch_to(&self, lang: &Language) -> Result<(), SwitchError> {
+        let id = self
+            .mapping
+            .source_for(lang)
+            .ok_or_else(|| SwitchError::NotInstalled(lang.to_string()))?;
         self.select_by_id(id)
     }
 
@@ -168,6 +241,7 @@ pub struct SourceInfo {
     pub name: String,
     pub category: String,
     pub type_: String,
+    pub languages: Vec<String>,
     pub is_enabled: bool,
     pub is_selectable: bool,
 }
@@ -189,6 +263,8 @@ pub fn list_all_sources() -> Vec<SourceInfo> {
                     name: read_str(ptr, kTISPropertyLocalizedName).unwrap_or_default(),
                     category: read_str(ptr, kTISPropertyInputSourceCategory).unwrap_or_default(),
                     type_: read_str(ptr, kTISPropertyInputSourceType).unwrap_or_default(),
+                    languages: read_string_array(ptr, kTISPropertyInputSourceLanguages)
+                        .unwrap_or_default(),
                     is_enabled: read_bool(ptr, kTISPropertyInputSourceIsEnabled).unwrap_or(false),
                     is_selectable: read_bool(ptr, kTISPropertyInputSourceIsSelectCapable)
                         .unwrap_or(false),
@@ -264,3 +340,13 @@ unsafe fn read_bool(src: CFTypeRef, key: CFStringRef) -> Option<bool> {
     }
     Some(CFBooleanGetValue(val_ptr) != 0)
 }
+
+unsafe fn read_string_array(src: CFTypeRef, key: CFStringRef) -> Option<Vec<String>> {
+    let val_ptr = TISGetInputSourceProperty(src as *const c_void, key);
+    if val_ptr.is_null() {
+        return None;
+    }
+    let array: CFArray<CFString> = CFArray::wrap_under_get_rule(val_ptr as CFArrayRef);
+    Some(array.iter().map(|value| value.to_string()).collect())
+}
+

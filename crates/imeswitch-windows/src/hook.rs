@@ -15,7 +15,7 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::composition::is_composing;
-use crate::keymap::{key_to_vk, vk_to_key};
+use crate::keymap::{key_to_vk_with_leader, vk_to_key_with_leader, VK_SEMICOLON};
 
 const REPLAY_MAGIC: usize = 0x696d_6573_7769_6e36; // "imeswin6"
 
@@ -45,6 +45,7 @@ struct HookState {
     sm: StateMachine,
     on_switch: Box<dyn FnMut(Language) + Send + 'static>,
     possible_composition: bool,
+    leader_vk: u32,
 }
 
 pub struct EventHook {
@@ -56,11 +57,35 @@ impl EventHook {
     where
         F: FnMut(Language) + Send + 'static,
     {
+        Self::install_with_state(StateMachine::new(), VK_SEMICOLON, on_switch)
+    }
+
+    pub fn install_with_mappings<F, I>(
+        leader_vk: u32,
+        mappings: I,
+        on_switch: F,
+    ) -> Result<Self, HookError>
+    where
+        F: FnMut(Language) + Send + 'static,
+        I: IntoIterator<Item = (Language, String)>,
+    {
+        Self::install_with_state(StateMachine::from_mappings(mappings), leader_vk, on_switch)
+    }
+
+    fn install_with_state<F>(
+        state_machine: StateMachine,
+        leader_vk: u32,
+        on_switch: F,
+    ) -> Result<Self, HookError>
+    where
+        F: FnMut(Language) + Send + 'static,
+    {
         HOOK_STATE
             .set(Mutex::new(HookState {
-                sm: StateMachine::new(),
+                sm: state_machine,
                 on_switch: Box::new(on_switch),
                 possible_composition: false,
+                leader_vk,
             }))
             .map_err(|_| HookError::AlreadyInstalled)?;
 
@@ -128,10 +153,12 @@ fn handle_keydown(vk: u32) -> Result<bool, HookError> {
     let composing = is_composing();
     let has_mod = has_blocking_modifier();
 
-    let response = {
+    let (response, leader_vk) = {
         let mut guard = state.lock().unwrap();
+        let leader_vk = guard.leader_vk;
         let should_defer = guard.sm.is_idle()
-            && (composing || (guard.possible_composition && !is_composition_ending_key(vk)));
+            && (composing
+                || (guard.possible_composition && !is_composition_ending_key(vk, leader_vk)));
 
         log::debug!(
             "kd vk={:#04x} composing={} possible={} mod={} defer={}",
@@ -147,7 +174,11 @@ fn handle_keydown(vk: u32) -> Result<bool, HookError> {
             return Ok(false);
         }
 
-        let key = if has_mod { Key::Other } else { vk_to_key(vk) };
+        let key = if has_mod {
+            Key::Other
+        } else {
+            vk_to_key_with_leader(vk, leader_vk)
+        };
         let response = guard.sm.on_keydown(key);
         update_possible_composition(&mut guard, composing, vk, response.switch.is_some());
         log::debug!(
@@ -157,16 +188,16 @@ fn handle_keydown(vk: u32) -> Result<bool, HookError> {
             response.replay,
             response.switch,
         );
-        response
+        (response, leader_vk)
     };
 
-    if let Some(lang) = response.switch {
+    if let Some(lang) = response.switch.clone() {
         let mut guard = state.lock().unwrap();
         (guard.on_switch)(lang);
     }
 
     for key in &response.replay {
-        if let Some(vk) = key_to_vk(*key) {
+        if let Some(vk) = key_to_vk_with_leader(*key, leader_vk) {
             send_key(vk);
         }
     }
@@ -193,14 +224,15 @@ fn has_blocking_modifier() -> bool {
 }
 
 fn update_possible_composition(state: &mut HookState, composing: bool, vk: u32, did_switch: bool) {
-    if did_switch || is_composition_ending_key(vk) {
+    if did_switch || is_composition_ending_key(vk, state.leader_vk) {
         state.possible_composition = false;
-    } else if composing || vk_to_key(vk) == Key::Other {
+    } else if composing || vk_to_key_with_leader(vk, state.leader_vk) == Key::Other {
         state.possible_composition = true;
     }
 }
 
-fn is_composition_ending_key(vk: u32) -> bool {
+fn is_composition_ending_key(vk: u32, leader_vk: u32) -> bool {
+    let _ = leader_vk;
     matches!(
         vk,
         x if x == VK_SPACE as u32
