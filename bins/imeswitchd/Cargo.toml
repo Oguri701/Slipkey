@@ -16,3 +16,6 @@ env_logger.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 imeswitch-macos.workspace = true
+
+[target.'cfg(target_os = "windows")'.dependencies]
+imeswitch-windows.workspace = true

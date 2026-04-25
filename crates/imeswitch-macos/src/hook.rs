@@ -8,24 +8,27 @@
 //!
 //! - **Modifier mask**: Shift/Ctrl/Option/Cmd held → never interpret as
 //!   part of a trigger. Otherwise Shift+; (= `:`) would start a sequence.
-//! - **Composition heuristic**: if the active input source is an IME AND
-//!   the user typed something recently, assume a composition buffer is
-//!   pending and let the IME handle the event. Rough but cheap; avoids
-//!   eating `;` mid-Chinese/Japanese compose.
+//! - **Composition awareness**: if the active input source is an IME, ask
+//!   Accessibility whether the focused text input has marked text. If AX
+//!   cannot answer, fall back to a short idle-window heuristic so we still
+//!   avoid eating `;` mid-Chinese/Japanese compose in opaque controls.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use core_foundation::runloop::{kCFRunLoopCommonModes, CFRunLoop};
 
 use core_graphics::event::{
-    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions,
-    CGEventTapPlacement, CGEventType, CallbackResult, EventField,
+    CGEvent, CGEventFlags, CGEventTap, CGEventTapLocation, CGEventTapOptions, CGEventTapPlacement,
+    CGEventType, CallbackResult, EventField,
 };
 use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
-use imeswitch_core::{Language, StateMachine};
+use imeswitch_core::{Key, Language, StateMachine};
 
+use crate::composition::{
+    focused_composition_state, should_defer_for_composition, CompositionState,
+};
 use crate::ime::{current_source_kind, CurrentSourceKind};
 use crate::keymap::{key_to_keycode, keycode_to_key};
 
@@ -58,8 +61,8 @@ impl std::error::Error for HookError {}
 
 struct HookState {
     sm: StateMachine,
-    on_switch: Box<dyn FnMut(Language) + Send + 'static>,
     last_keydown: Option<Instant>,
+    possible_composition: bool,
 }
 
 pub struct EventHook {
@@ -71,75 +74,127 @@ impl EventHook {
     where
         F: FnMut(Language) + Send + 'static,
     {
-        let state: &'static Mutex<HookState> = Box::leak(Box::new(Mutex::new(HookState {
+        let state = Arc::new(Mutex::new(HookState {
             sm: StateMachine::new(),
-            on_switch: Box::new(on_switch),
             last_keydown: None,
-        })));
+            possible_composition: false,
+        }));
+        let on_switch = Arc::new(Mutex::new(
+            Box::new(on_switch) as Box<dyn FnMut(Language) + Send>
+        ));
 
         let tap = CGEventTap::new(
             CGEventTapLocation::HID,
             CGEventTapPlacement::HeadInsertEventTap,
             CGEventTapOptions::Default,
             vec![CGEventType::KeyDown],
-            move |_proxy, event_type, event| {
-                if !matches!(event_type, CGEventType::KeyDown) {
-                    return CallbackResult::Keep;
-                }
-
-                let keycode = event
-                    .get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
-                    as u16;
-                let flags = event.get_flags();
-                let now = Instant::now();
-
-                // Defer to IME if we're inside a likely composition and not
-                // already mid-sequence. Mid-sequence wins because the user
-                // already committed to a trigger path (the leader was grabbed)
-                // and dropping it now would eat keystrokes unnoticed.
-                {
-                    let guard = state.lock().unwrap();
-                    let idle_sm = guard.sm.is_idle();
-                    let recently_typed = guard
-                        .last_keydown
-                        .map_or(false, |t| now.duration_since(t) < COMPOSITION_IDLE_THRESHOLD);
-                    drop(guard);
-
-                    if idle_sm
-                        && recently_typed
-                        && current_source_kind() == CurrentSourceKind::InputMethod
-                    {
-                        state.lock().unwrap().last_keydown = Some(now);
+            {
+                let state = Arc::clone(&state);
+                let on_switch = Arc::clone(&on_switch);
+                move |_proxy, event_type, event| {
+                    if !matches!(event_type, CGEventType::KeyDown) {
                         return CallbackResult::Keep;
                     }
-                }
 
-                let key = if has_blocking_modifier(flags) {
-                    imeswitch_core::Key::Other
-                } else {
-                    keycode_to_key(keycode)
-                };
+                    let keycode = event
+                        .get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE)
+                        as u16;
+                    let flags = event.get_flags();
+                    let now = Instant::now();
 
-                let response = {
-                    let mut guard = state.lock().unwrap();
-                    let resp = guard.sm.on_keydown(key);
-                    if let Some(lang) = resp.switch {
-                        (guard.on_switch)(lang);
+                    let (idle_sm, last_kd, possible_composition) = {
+                        let guard = state.lock().unwrap();
+                        (
+                            guard.sm.is_idle(),
+                            guard.last_keydown,
+                            guard.possible_composition,
+                        )
+                    };
+                    let ms_since_last_kd = last_kd.map(|t| now.duration_since(t).as_millis());
+                    let recently_typed = ms_since_last_kd
+                        .map_or(false, |m| m < COMPOSITION_IDLE_THRESHOLD.as_millis());
+                    let source_kind = current_source_kind();
+                    let composition_state = if source_kind == CurrentSourceKind::InputMethod {
+                        focused_composition_state()
+                    } else {
+                        CompositionState::Inactive
+                    };
+                    let should_defer = should_defer_for_composition(
+                        idle_sm,
+                        source_kind == CurrentSourceKind::InputMethod,
+                        composition_state,
+                        possible_composition,
+                        recently_typed,
+                    );
+                    let has_mod = has_blocking_modifier(flags);
+
+                    log::debug!(
+                        "kd kc={:#04x} flags={:#010x} source={:?} composition={:?} possible={} idle={} last_ms={:?} recent={} mod={} → defer={}",
+                        keycode,
+                        flags.bits(),
+                        source_kind,
+                        composition_state,
+                        possible_composition,
+                        idle_sm,
+                        ms_since_last_kd,
+                        recently_typed,
+                        has_mod,
+                        should_defer,
+                    );
+
+                    if should_defer {
+                        let mut guard = state.lock().unwrap();
+                        guard.last_keydown = Some(now);
+                        update_possible_composition(
+                            &mut guard,
+                            source_kind,
+                            composition_state,
+                            keycode,
+                            false,
+                        );
+                        return CallbackResult::Keep;
                     }
-                    guard.last_keydown = Some(now);
-                    resp
-                };
 
-                for k in &response.replay {
-                    if let Some(kc) = key_to_keycode(*k) {
-                        synth_post(kc);
+                    let key = event_key(keycode, flags);
+
+                    let response = {
+                        let mut guard = state.lock().unwrap();
+                        let resp = guard.sm.on_keydown(key);
+                        guard.last_keydown = Some(now);
+                        update_possible_composition(
+                            &mut guard,
+                            source_kind,
+                            composition_state,
+                            keycode,
+                            resp.switch.is_some(),
+                        );
+                        resp
+                    };
+
+                    if let Some(lang) = response.switch {
+                        let mut callback = on_switch.lock().unwrap();
+                        callback(lang);
                     }
-                }
 
-                if response.suppress {
-                    CallbackResult::Drop
-                } else {
-                    CallbackResult::Keep
+                    log::debug!(
+                        "  → key={:?} suppress={} replay={:?} switch={:?}",
+                        key,
+                        response.suppress,
+                        response.replay,
+                        response.switch,
+                    );
+
+                    for k in &response.replay {
+                        if let Some(kc) = key_to_keycode(*k) {
+                            synth_post(kc);
+                        }
+                    }
+
+                    if response.suppress {
+                        CallbackResult::Drop
+                    } else {
+                        CallbackResult::Keep
+                    }
                 }
             },
         )
@@ -167,6 +222,40 @@ fn has_blocking_modifier(flags: CGEventFlags) -> bool {
     flags.intersects(mask)
 }
 
+fn event_key(keycode: u16, flags: CGEventFlags) -> Key {
+    if has_blocking_modifier(flags) {
+        Key::Other
+    } else {
+        keycode_to_key(keycode)
+    }
+}
+
+fn update_possible_composition(
+    state: &mut HookState,
+    source_kind: CurrentSourceKind,
+    composition_state: CompositionState,
+    keycode: u16,
+    did_switch: bool,
+) {
+    if did_switch || source_kind != CurrentSourceKind::InputMethod {
+        state.possible_composition = false;
+        return;
+    }
+
+    match composition_state {
+        CompositionState::Active => state.possible_composition = true,
+        CompositionState::Inactive => state.possible_composition = false,
+        CompositionState::Unknown if is_composition_ending_key(keycode) => {
+            state.possible_composition = false;
+        }
+        CompositionState::Unknown => state.possible_composition = true,
+    }
+}
+
+fn is_composition_ending_key(keycode: u16) -> bool {
+    matches!(keycode, 0x24 | 0x31 | 0x33 | 0x35)
+}
+
 fn synth_post(keycode: u16) {
     let Ok(src) = CGEventSource::new(CGEventSourceStateID::HIDSystemState) else {
         return;
@@ -182,6 +271,8 @@ fn synth_post(keycode: u16) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::composition::{should_defer_for_composition, CompositionState};
+    use crate::keymap::KC_SEMICOLON;
 
     #[test]
     fn blocking_modifier_detects_shift_ctrl_option_cmd() {
@@ -199,5 +290,145 @@ mod tests {
         assert!(!has_blocking_modifier(CGEventFlags::CGEventFlagNull));
         assert!(!has_blocking_modifier(CGEventFlags::CGEventFlagAlphaShift));
         assert!(!has_blocking_modifier(CGEventFlags::CGEventFlagSecondaryFn));
+    }
+
+    #[test]
+    fn shifted_leader_is_not_a_trigger_key() {
+        assert_eq!(
+            event_key(KC_SEMICOLON, CGEventFlags::CGEventFlagShift),
+            Key::Other
+        );
+    }
+
+    #[test]
+    fn active_composition_defers_even_after_idle_threshold() {
+        assert!(should_defer_for_composition(
+            true,
+            true,
+            CompositionState::Active,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn inactive_composition_does_not_use_time_heuristic() {
+        assert!(!should_defer_for_composition(
+            true,
+            true,
+            CompositionState::Inactive,
+            true,
+            true
+        ));
+    }
+
+    #[test]
+    fn unknown_composition_falls_back_to_time_heuristic() {
+        assert!(should_defer_for_composition(
+            true,
+            true,
+            CompositionState::Unknown,
+            false,
+            true
+        ));
+        assert!(!should_defer_for_composition(
+            true,
+            true,
+            CompositionState::Unknown,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn unknown_possible_composition_defers_after_idle_threshold() {
+        assert!(should_defer_for_composition(
+            true,
+            true,
+            CompositionState::Unknown,
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn possible_composition_tracks_ime_typing_until_explicit_end() {
+        let mut state = HookState {
+            sm: StateMachine::new(),
+            last_keydown: None,
+            possible_composition: false,
+        };
+
+        update_possible_composition(
+            &mut state,
+            CurrentSourceKind::InputMethod,
+            CompositionState::Unknown,
+            0x04,
+            false,
+        );
+        assert!(state.possible_composition);
+
+        update_possible_composition(
+            &mut state,
+            CurrentSourceKind::InputMethod,
+            CompositionState::Unknown,
+            0x24,
+            false,
+        );
+        assert!(!state.possible_composition);
+    }
+
+    #[test]
+    fn space_commits_and_ends_possible_composition() {
+        let mut state = HookState {
+            sm: StateMachine::new(),
+            last_keydown: None,
+            possible_composition: false,
+        };
+
+        update_possible_composition(
+            &mut state,
+            CurrentSourceKind::InputMethod,
+            CompositionState::Unknown,
+            0x04,
+            false,
+        );
+        assert!(state.possible_composition);
+
+        update_possible_composition(
+            &mut state,
+            CurrentSourceKind::InputMethod,
+            CompositionState::Unknown,
+            0x31,
+            false,
+        );
+        assert!(!state.possible_composition);
+    }
+
+    #[test]
+    fn delete_cancels_and_ends_possible_composition() {
+        let mut state = HookState {
+            sm: StateMachine::new(),
+            last_keydown: None,
+            possible_composition: false,
+        };
+
+        update_possible_composition(
+            &mut state,
+            CurrentSourceKind::InputMethod,
+            CompositionState::Unknown,
+            0x04,
+            false,
+        );
+        assert!(state.possible_composition);
+
+        update_possible_composition(
+            &mut state,
+            CurrentSourceKind::InputMethod,
+            CompositionState::Unknown,
+            0x33,
+            false,
+        );
+        assert!(!state.possible_composition);
     }
 }

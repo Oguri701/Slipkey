@@ -201,6 +201,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "imeswitch-windows"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "imeswitch-core",
+ "log",
+ "serde",
+ "toml",
+ "windows-sys",
+]
+
+[[package]]
 name = "imeswitchd"
 version = "0.1.0"
 dependencies = [
@@ -208,6 +220,7 @@ dependencies = [
  "env_logger",
  "imeswitch-core",
  "imeswitch-macos",
+ "imeswitch-windows",
  "log",
 ]
 

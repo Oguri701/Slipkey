@@ -47,8 +47,9 @@ extern "C" {
 
 #[derive(Debug)]
 pub enum SwitchError {
-    NotInstalled(&'static str),
-    SelectFailed { id: &'static str, status: OSStatus },
+    NotInstalled(String),
+    NotSelectable(String),
+    SelectFailed { id: String, status: OSStatus },
 }
 
 impl std::fmt::Display for SwitchError {
@@ -57,6 +58,11 @@ impl std::fmt::Display for SwitchError {
             SwitchError::NotInstalled(id) => write!(
                 f,
                 "input source '{}' not installed — enable it in System Settings → Keyboard → Input Sources",
+                id
+            ),
+            SwitchError::NotSelectable(id) => write!(
+                f,
+                "input source '{}' is installed but not selectable — use `imeswitchd list` and choose a selectable input-mode ID",
                 id
             ),
             SwitchError::SelectFailed { id, status } => {
@@ -70,17 +76,17 @@ impl std::error::Error for SwitchError {}
 
 #[derive(Debug, Clone)]
 pub struct Mapping {
-    pub en: &'static str,
-    pub ja: &'static str,
-    pub zh: &'static str,
+    pub en: String,
+    pub ja: String,
+    pub zh: String,
 }
 
 impl Default for Mapping {
     fn default() -> Self {
         Self {
-            en: "com.apple.keylayout.ABC",
-            ja: "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese",
-            zh: "com.apple.inputmethod.SCIM.Shuangpin",
+            en: "com.apple.keylayout.ABC".to_string(),
+            ja: "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese".to_string(),
+            zh: "com.apple.inputmethod.SCIM.Shuangpin".to_string(),
         }
     }
 }
@@ -91,7 +97,9 @@ pub struct ImeSwitcher {
 
 impl ImeSwitcher {
     pub fn new() -> Self {
-        Self { mapping: Mapping::default() }
+        Self {
+            mapping: Mapping::default(),
+        }
     }
 
     pub fn with_mapping(mapping: Mapping) -> Self {
@@ -100,42 +108,49 @@ impl ImeSwitcher {
 
     pub fn switch_to(&self, lang: Language) -> Result<(), SwitchError> {
         let id = match lang {
-            Language::En => self.mapping.en,
-            Language::Ja => self.mapping.ja,
-            Language::Zh => self.mapping.zh,
+            Language::En => &self.mapping.en,
+            Language::Ja => &self.mapping.ja,
+            Language::Zh => &self.mapping.zh,
         };
         self.select_by_id(id)
     }
 
-    fn select_by_id(&self, id: &'static str) -> Result<(), SwitchError> {
+    fn select_by_id(&self, id: &str) -> Result<(), SwitchError> {
         let id_cf = CFString::new(id);
-        let key_cf: CFString =
-            unsafe { CFString::wrap_under_get_rule(kTISPropertyInputSourceID) };
-        let filter = CFDictionary::from_CFType_pairs(&[(
-            key_cf.as_CFType(),
-            id_cf.as_CFType(),
-        )]);
+        let key_cf: CFString = unsafe { CFString::wrap_under_get_rule(kTISPropertyInputSourceID) };
+        let filter = CFDictionary::from_CFType_pairs(&[(key_cf.as_CFType(), id_cf.as_CFType())]);
 
-        let arr_ref = unsafe {
-            TISCreateInputSourceList(filter.as_CFTypeRef(), false)
-        };
+        let arr_ref = unsafe { TISCreateInputSourceList(filter.as_CFTypeRef(), false) };
         if arr_ref.is_null() {
-            return Err(SwitchError::NotInstalled(id));
+            return Err(SwitchError::NotInstalled(id.to_string()));
         }
-        let array: CFArray<CFType> =
-            unsafe { CFArray::wrap_under_create_rule(arr_ref) };
+        let array: CFArray<CFType> = unsafe { CFArray::wrap_under_create_rule(arr_ref) };
         if array.len() == 0 {
-            return Err(SwitchError::NotInstalled(id));
+            return Err(SwitchError::NotInstalled(id.to_string()));
         }
 
         // First match.
         let source_item = array
             .get(0)
-            .ok_or(SwitchError::NotInstalled(id))?;
+            .ok_or_else(|| SwitchError::NotInstalled(id.to_string()))?;
         let source_ref: TISInputSourceRef = source_item.as_CFTypeRef() as *const c_void;
+        let selectable = unsafe {
+            read_bool(
+                source_item.as_CFTypeRef(),
+                kTISPropertyInputSourceIsSelectCapable,
+            )
+        }
+        .unwrap_or(false);
+        if !selectable {
+            return Err(SwitchError::NotSelectable(id.to_string()));
+        }
+
         let status = unsafe { TISSelectInputSource(source_ref) };
         if status != 0 {
-            return Err(SwitchError::SelectFailed { id, status });
+            return Err(SwitchError::SelectFailed {
+                id: id.to_string(),
+                status,
+            });
         }
         Ok(())
     }
@@ -223,9 +238,7 @@ pub fn current_source_kind() -> CurrentSourceKind {
             Some("TISTypeKeyboardLayout") => CurrentSourceKind::KeyboardLayout,
             Some("TISTypeKeyboardInputMode")
             | Some("TISTypeKeyboardInputMethodWithoutModes")
-            | Some("TISTypeKeyboardInputMethodModeEnabled") => {
-                CurrentSourceKind::InputMethod
-            }
+            | Some("TISTypeKeyboardInputMethodModeEnabled") => CurrentSourceKind::InputMethod,
             _ => CurrentSourceKind::Other,
         }
     }

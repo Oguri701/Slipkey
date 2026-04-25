@@ -1,0 +1,24 @@
+[package]
+name = "imeswitch-windows"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+imeswitch-core.workspace = true
+anyhow.workspace = true
+log.workspace = true
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Input_Ime",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }

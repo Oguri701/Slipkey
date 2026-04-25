@@ -13,16 +13,32 @@ pub struct Response {
 
 impl Response {
     fn pass() -> Self {
-        Self { suppress: false, replay: Vec::new(), switch: None }
+        Self {
+            suppress: false,
+            replay: Vec::new(),
+            switch: None,
+        }
     }
     fn suppress() -> Self {
-        Self { suppress: true, replay: Vec::new(), switch: None }
+        Self {
+            suppress: true,
+            replay: Vec::new(),
+            switch: None,
+        }
     }
     fn switch(lang: Language) -> Self {
-        Self { suppress: true, replay: Vec::new(), switch: Some(lang) }
+        Self {
+            suppress: true,
+            replay: Vec::new(),
+            switch: Some(lang),
+        }
     }
     fn cancel(replay: Vec<Key>) -> Self {
-        Self { suppress: false, replay, switch: None }
+        Self {
+            suppress: false,
+            replay,
+            switch: None,
+        }
     }
 }
 
@@ -85,7 +101,11 @@ impl StateMachine {
             (State::AfterLeader, Key::Leader) => {
                 // Flush the first `;`, start fresh with this one.
                 self.state = State::AfterLeader;
-                Response { suppress: true, replay: vec![Key::Leader], switch: None }
+                Response {
+                    suppress: true,
+                    replay: vec![Key::Leader],
+                    switch: None,
+                }
             }
             // Any other key: sequence aborted; replay `;` and let current pass.
             (State::AfterLeader, _) => {
@@ -110,15 +130,27 @@ impl StateMachine {
             // Second `;` mid-sequence: flush what we had, restart.
             (State::AfterE, Key::Leader) => {
                 self.state = State::AfterLeader;
-                Response { suppress: true, replay: vec![Key::Leader, Key::E], switch: None }
+                Response {
+                    suppress: true,
+                    replay: vec![Key::Leader, Key::E],
+                    switch: None,
+                }
             }
             (State::AfterJ, Key::Leader) => {
                 self.state = State::AfterLeader;
-                Response { suppress: true, replay: vec![Key::Leader, Key::J], switch: None }
+                Response {
+                    suppress: true,
+                    replay: vec![Key::Leader, Key::J],
+                    switch: None,
+                }
             }
             (State::AfterZ, Key::Leader) => {
                 self.state = State::AfterLeader;
-                Response { suppress: true, replay: vec![Key::Leader, Key::Z], switch: None }
+                Response {
+                    suppress: true,
+                    replay: vec![Key::Leader, Key::Z],
+                    switch: None,
+                }
             }
 
             // Broken sequence: replay buffered, pass current.

@@ -20,7 +20,9 @@ fn run() -> anyhow::Result<()> {
     }
     log::info!(
         "mapping: en={} ja={} zh={}",
-        mapping.en, mapping.ja, mapping.zh
+        mapping.en,
+        mapping.ja,
+        mapping.zh
     );
 
     let switcher = Arc::new(ImeSwitcher::with_mapping(mapping));
@@ -46,16 +48,69 @@ fn run() -> anyhow::Result<()> {
     })
     .map_err(|e| anyhow::anyhow!("hook install failed: {e}. Check System Settings → Privacy & Security → Accessibility and grant this binary permission, then relaunch."))?;
 
-    log::info!(
-        "imeswitchd running. Triggers: ;en ;ja ;zh. Press Ctrl-C to stop."
-    );
+    log::info!("imeswitchd running. Triggers: ;en ;ja ;zh. Press Ctrl-C to stop.");
     run_loop();
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
 fn run() -> anyhow::Result<()> {
-    anyhow::bail!("imeswitchd currently only supports macOS (M0). Windows support lands in M1.")
+    use imeswitch_core::Language;
+    use imeswitch_windows::config::{self, LoadOutcome};
+    use imeswitch_windows::{run_loop, EventHook, ImeSwitcher};
+    use std::sync::Arc;
+
+    let (mapping, outcome) = config::load_or_default();
+    match &outcome {
+        LoadOutcome::Loaded { path, .. } => {
+            log::info!("config loaded from {}", path.display());
+        }
+        LoadOutcome::Missing { path } => {
+            log::info!(
+                "no config at {} - using built-in defaults (run `imeswitchd init` to write a template)",
+                path.display()
+            );
+        }
+        LoadOutcome::ParseError { .. } => { /* already warned inside load */ }
+    }
+    log::info!(
+        "mapping: en={} ja={} zh={}",
+        mapping.en,
+        mapping.ja,
+        mapping.zh
+    );
+
+    let switcher = Arc::new(ImeSwitcher::with_mapping(mapping));
+    let switcher_cb = switcher.clone();
+    let _hook = EventHook::install(move |lang: Language| {
+        let before = imeswitch_windows::ime::current_source_id();
+        let result = switcher_cb.switch_to(lang);
+        let after = imeswitch_windows::ime::current_source_id();
+        match result {
+            Ok(()) => log::info!(
+                "switch {:?}: {} -> {}",
+                lang,
+                before.as_deref().unwrap_or("<none>"),
+                after.as_deref().unwrap_or("<none>"),
+            ),
+            Err(e) => log::error!(
+                "switch {:?} failed: {} (was: {})",
+                lang,
+                e,
+                before.as_deref().unwrap_or("<none>"),
+            ),
+        }
+    })
+    .map_err(|e| anyhow::anyhow!("hook install failed: {e}"))?;
+
+    log::info!("imeswitchd running. Triggers: ;en ;ja ;zh. Press Ctrl-C to stop.");
+    run_loop();
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "windows")))]
+fn run() -> anyhow::Result<()> {
+    anyhow::bail!("imeswitchd currently supports macOS and Windows.")
 }
 
 #[cfg(target_os = "macos")]
@@ -71,16 +126,23 @@ fn list_sources() {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn list_sources() {
+    let sources = imeswitch_windows::ime::list_all_sources();
+    println!("# {} keyboard layouts reported by Windows", sources.len());
+    println!("# id");
+    for s in sources {
+        println!("{}", s.id);
+    }
+}
+
 #[cfg(target_os = "macos")]
 fn init_config() -> anyhow::Result<()> {
     use imeswitch_macos::config::{default_path, Config};
 
     let path = default_path();
     if path.exists() {
-        anyhow::bail!(
-            "{} already exists — refusing to overwrite",
-            path.display()
-        );
+        anyhow::bail!("{} already exists — refusing to overwrite", path.display());
     }
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -91,21 +153,36 @@ fn init_config() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(target_os = "windows")]
+fn init_config() -> anyhow::Result<()> {
+    use imeswitch_windows::config::{default_path, Config};
+
+    let path = default_path();
+    if path.exists() {
+        anyhow::bail!("{} already exists - refusing to overwrite", path.display());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, Config::template_toml())?;
+    println!("wrote {}", path.display());
+    println!("edit it and restart imeswitchd; use `imeswitchd list` to find installed HKL IDs.");
+    Ok(())
+}
+
 fn print_usage() {
     eprintln!("usage: imeswitchd [SUBCOMMAND]");
     eprintln!();
     eprintln!("Subcommands:");
     eprintln!("  (none)  run the daemon (default)");
-    eprintln!("  list    print all input sources known to TIS");
-    eprintln!("  init    write a starter config at ~/.config/imeswitch/config.toml");
+    eprintln!("  list    print all input sources / keyboard layouts known to the OS");
+    eprintln!("  init    write a starter config file");
 }
 
 fn main() {
-    env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("info"),
-    )
-    .format_timestamp_secs()
-    .init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_secs()
+        .init();
 
     let args: Vec<String> = std::env::args().collect();
     match args.get(1).map(String::as_str) {
@@ -116,25 +193,25 @@ fn main() {
             }
         }
         Some("list") | Some("--list") => {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             list_sources();
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             {
-                eprintln!("list only supported on macOS");
+                eprintln!("list only supported on macOS and Windows");
                 std::process::exit(1);
             }
         }
         Some("init") => {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             {
                 if let Err(e) = init_config() {
                     eprintln!("init failed: {e:#}");
                     std::process::exit(1);
                 }
             }
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             {
-                eprintln!("init only supported on macOS");
+                eprintln!("init only supported on macOS and Windows");
                 std::process::exit(1);
             }
         }

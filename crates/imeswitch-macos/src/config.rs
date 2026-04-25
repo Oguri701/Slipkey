@@ -23,17 +23,14 @@ impl Config {
     /// Merge this config onto the built-in defaults to produce a full Mapping.
     pub fn into_mapping(self) -> Mapping {
         let mut m = Mapping::default();
-        // Apply overrides; leak short-lived Strings to &'static because
-        // Mapping's fields are &'static str. This is fine because Config is
-        // loaded once at process start and lives for the entire run.
         if let Some(s) = self.en {
-            m.en = Box::leak(s.into_boxed_str());
+            m.en = s;
         }
         if let Some(s) = self.ja {
-            m.ja = Box::leak(s.into_boxed_str());
+            m.ja = s;
         }
         if let Some(s) = self.zh {
-            m.zh = Box::leak(s.into_boxed_str());
+            m.zh = s;
         }
         m
     }
@@ -60,9 +57,17 @@ impl Config {
 
 #[derive(Debug)]
 pub enum LoadOutcome {
-    Loaded { path: PathBuf, config: Config },
-    Missing { path: PathBuf },
-    ParseError { path: PathBuf, error: toml::de::Error },
+    Loaded {
+        path: PathBuf,
+        config: Config,
+    },
+    Missing {
+        path: PathBuf,
+    },
+    ParseError {
+        path: PathBuf,
+        error: toml::de::Error,
+    },
 }
 
 /// Path we look for the config at. Respects `$XDG_CONFIG_HOME`, else `~/.config`.
@@ -76,18 +81,26 @@ pub fn default_path() -> PathBuf {
 
 pub fn load_from(path: &Path) -> LoadOutcome {
     match std::fs::read_to_string(path) {
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            LoadOutcome::Missing { path: path.to_path_buf() }
-        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => LoadOutcome::Missing {
+            path: path.to_path_buf(),
+        },
         Err(e) => {
             // Treat unreadable (permission etc.) like missing so we never
             // refuse to start; log the underlying error.
             log::warn!("could not read {}: {} — using defaults", path.display(), e);
-            LoadOutcome::Missing { path: path.to_path_buf() }
+            LoadOutcome::Missing {
+                path: path.to_path_buf(),
+            }
         }
         Ok(text) => match toml::from_str::<Config>(&text) {
-            Ok(c) => LoadOutcome::Loaded { path: path.to_path_buf(), config: c },
-            Err(e) => LoadOutcome::ParseError { path: path.to_path_buf(), error: e },
+            Ok(c) => LoadOutcome::Loaded {
+                path: path.to_path_buf(),
+                config: c,
+            },
+            Err(e) => LoadOutcome::ParseError {
+                path: path.to_path_buf(),
+                error: e,
+            },
         },
     }
 }
@@ -137,6 +150,18 @@ mod tests {
     }
 
     #[test]
+    fn mapping_owns_configured_ids() {
+        let source = String::from("com.example.custom");
+        let c = Config {
+            en: Some(source.clone()),
+            ja: None,
+            zh: None,
+        };
+        let m = c.into_mapping();
+        assert_eq!(m.en, source);
+    }
+
+    #[test]
     fn unknown_keys_are_rejected() {
         let r: Result<Config, _> = toml::from_str(r#"pl = "polish""#);
         assert!(r.is_err(), "unknown keys should fail deserialization");
@@ -147,8 +172,8 @@ mod tests {
         let tpl = Config::template_toml();
         let c: Config = toml::from_str(&tpl).unwrap();
         let d = Mapping::default();
-        assert_eq!(c.en.as_deref(), Some(d.en));
-        assert_eq!(c.ja.as_deref(), Some(d.ja));
-        assert_eq!(c.zh.as_deref(), Some(d.zh));
+        assert_eq!(c.en.as_deref(), Some(d.en.as_str()));
+        assert_eq!(c.ja.as_deref(), Some(d.ja.as_str()));
+        assert_eq!(c.zh.as_deref(), Some(d.zh.as_str()));
     }
 }
