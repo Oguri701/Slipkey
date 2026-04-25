@@ -12,14 +12,11 @@ fi
 
 cargo test --workspace
 cd "$ROOT/bins/imeswitch-app"
+# tauri build ad-hoc signs the .app with identity "-" before bundling it
+# into the DMG and then deletes target/release/bundle/macos/imeswitch.app,
+# so any post-bundle codesign step on that path runs against nothing.
 cargo tauri build --bundles dmg
 cd "$ROOT"
 
-APP="target/release/bundle/macos/imeswitch.app"
-if [ -d "$APP" ]; then
-  codesign --force --deep --sign - "$APP"
-  codesign --verify --deep --strict "$APP"
-fi
-
 echo "macOS bundle output:"
-find target/release/bundle -maxdepth 3 \( -name '*.app' -o -name '*.dmg' \) -print
+find target/release/bundle -maxdepth 3 -name '*.dmg' -print
