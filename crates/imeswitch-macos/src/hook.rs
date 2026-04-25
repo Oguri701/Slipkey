@@ -30,9 +30,7 @@ use crate::composition::{
     focused_composition_state, should_defer_for_composition, CompositionState,
 };
 use crate::ime::{current_source_kind, CurrentSourceKind};
-use crate::keymap::{
-    key_to_keycode_with_leader, keycode_to_key_with_leader, KC_SEMICOLON,
-};
+use crate::keymap::{key_to_keycode_with_leader, keycode_to_key_with_leader, KC_SEMICOLON};
 
 /// How long after the last keystroke an IME is assumed to still hold a
 /// composition buffer. During this window we defer to the IME rather than

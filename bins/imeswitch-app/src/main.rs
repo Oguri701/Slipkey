@@ -77,13 +77,12 @@ fn main() {
                 .install_hook(mapping)
                 .context("failed to install keyboard hook")?;
             app.manage(state);
+            let app_state = app.state::<AppState>();
+            commands::set_tray_visible(app.handle(), &app_state, true)
+                .map_err(|error| anyhow::anyhow!("failed to create menu bar icon: {error}"))?;
 
             let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT), Code::Comma);
             app.global_shortcut().register(shortcut)?;
-
-            if should_open_wizard() {
-                show_wizard(app.handle());
-            }
 
             Ok(())
         })
@@ -93,9 +92,9 @@ fn main() {
             commands::discover_imes,
             commands::set_autostart,
             commands::get_autostart,
+            commands::get_menubar_visible,
             commands::set_menubar_visible,
             commands::open_settings,
-            commands::finish_wizard,
         ])
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::CloseRequested { .. }) {
@@ -106,26 +105,9 @@ fn main() {
         .expect("error while running imeswitch app");
 }
 
-fn should_open_wizard() -> bool {
-    !config::default_path().exists()
-}
-
 pub(crate) fn show_settings<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(window) = app.get_webview_window("settings") {
         let _ = window.show();
         let _ = window.set_focus();
-    }
-}
-
-pub(crate) fn show_wizard<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    if let Some(window) = app.get_webview_window("wizard") {
-        let _ = window.show();
-        let _ = window.set_focus();
-    }
-}
-
-pub(crate) fn hide_wizard<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
-    if let Some(window) = app.get_webview_window("wizard") {
-        let _ = window.hide();
     }
 }

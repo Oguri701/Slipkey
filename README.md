@@ -1,4 +1,6 @@
-# imeswitch
+# Slipkey
+
+> Source tree, binary, and config directory keep the legacy `imeswitch` name for now.
 
 Type a leader plus a language prefix in any text field to switch the OS input source. The default mappings are:
 
@@ -88,19 +90,19 @@ The script runs tests, builds the Tauri DMG, then ad-hoc signs the `.app` with `
 ## Install
 
 1. Open the DMG.
-2. Drag `imeswitch.app` to `/Applications`.
+2. Drag `Slipkey.app` to `/Applications`.
 3. Launch it once.
 4. Grant Accessibility permission in System Settings -> Privacy & Security -> Accessibility.
 5. Use `Command Option Comma` to open settings if the app is hidden.
 
-If macOS blocks the unsigned app, right-click `imeswitch.app`, choose Open, then confirm.
+If macOS blocks the unsigned app, right-click `Slipkey.app`, choose Open, then confirm.
 
 ## Remove
 
 Quit the app, then remove:
 
 ```bash
-rm -rf /Applications/imeswitch.app
+rm -rf /Applications/Slipkey.app
 rm -rf ~/.config/imeswitch
 ```
 

@@ -150,6 +150,7 @@ impl Mapping {
     pub fn trigger_mappings(&self) -> Vec<(Language, String)> {
         self.entries
             .iter()
+            .filter(|entry| !entry.prefix.is_empty())
             .map(|entry| (entry.language.clone(), entry.prefix.clone()))
             .collect()
     }

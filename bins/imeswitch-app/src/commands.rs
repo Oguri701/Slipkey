@@ -7,7 +7,7 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, State};
 use tauri_plugin_autostart::ManagerExt;
 
-use crate::{hide_wizard, show_settings, AppState};
+use crate::{show_settings, AppState};
 
 #[derive(Debug, Clone, Serialize)]
 pub struct ConfigDto {
@@ -90,20 +90,29 @@ pub fn get_autostart(app: AppHandle) -> Result<bool, String> {
 }
 
 #[tauri::command]
+pub fn get_menubar_visible(state: State<'_, AppState>) -> bool {
+    *state.tray_visible.lock().unwrap()
+}
+
+#[tauri::command]
 pub fn set_menubar_visible(
     app: AppHandle,
     state: State<'_, AppState>,
     visible: bool,
 ) -> Result<(), String> {
+    set_tray_visible(&app, &state, visible)
+}
+
+pub fn set_tray_visible(app: &AppHandle, state: &AppState, visible: bool) -> Result<(), String> {
     let mut tray = state.tray.lock().unwrap();
     if visible && tray.is_none() {
         let handle = app.clone();
         let built = TrayIconBuilder::new()
-            .tooltip("imeswitch")
+            .tooltip("Slipkey")
             .on_tray_icon_event(move |_tray, _event| {
                 show_settings(&handle);
             })
-            .build(&app)
+            .build(app)
             .map_err(|error| error.to_string())?;
         *tray = Some(built);
     } else if !visible {
@@ -115,12 +124,6 @@ pub fn set_menubar_visible(
 
 #[tauri::command]
 pub fn open_settings(app: AppHandle) {
-    show_settings(&app);
-}
-
-#[tauri::command]
-pub fn finish_wizard(app: AppHandle) {
-    hide_wizard(&app);
     show_settings(&app);
 }
 
@@ -166,7 +169,8 @@ fn mapping_from_dto(leader: char, mappings: Vec<MappingDto>) -> Result<Mapping, 
         if mapping.language.len() != 2 {
             return Err(format!("invalid language code '{}'", mapping.language));
         }
-        if mapping.prefix.is_empty() || !mapping.prefix.chars().all(|c| c.is_ascii_alphanumeric()) {
+        if !mapping.prefix.is_empty() && !mapping.prefix.chars().all(|c| c.is_ascii_alphanumeric())
+        {
             return Err(format!("invalid prefix '{}'", mapping.prefix));
         }
         if mapping.source.trim().is_empty() {
@@ -177,10 +181,6 @@ fn mapping_from_dto(leader: char, mappings: Vec<MappingDto>) -> Result<Mapping, 
             prefix: mapping.prefix.to_ascii_lowercase(),
             source: mapping.source,
         });
-    }
-
-    if entries.is_empty() {
-        return Err("at least one mapping is required".to_string());
     }
 
     Ok(Mapping::with_leader(leader, entries))

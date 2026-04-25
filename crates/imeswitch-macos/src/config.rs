@@ -42,10 +42,10 @@ impl MappingConfig {
     }
 
     fn into_entry(self) -> Option<MappingEntry> {
-        if self.language.len() != 2 || self.prefix.is_empty() {
+        if self.language.len() != 2 {
             return None;
         }
-        if !self.prefix.chars().all(|c| c.is_ascii_alphanumeric()) {
+        if !self.prefix.is_empty() && !self.prefix.chars().all(|c| c.is_ascii_alphanumeric()) {
             return None;
         }
         Some(MappingEntry {
@@ -72,9 +72,7 @@ impl Config {
                 .into_iter()
                 .filter_map(MappingConfig::into_entry)
                 .collect::<Vec<_>>();
-            if !entries.is_empty() {
-                return Mapping::with_leader(leader, entries);
-            }
+            return Mapping::with_leader(leader, entries);
         }
 
         let mut entries = Mapping::default().entries().to_vec();

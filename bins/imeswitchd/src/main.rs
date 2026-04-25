@@ -96,26 +96,27 @@ fn run() -> anyhow::Result<()> {
     let leader_vk = leader_vk_for(mapping.leader()).unwrap_or(VK_SEMICOLON);
     let switcher = Arc::new(ImeSwitcher::with_mapping(mapping));
     let switcher_cb = switcher.clone();
-    let _hook = EventHook::install_with_mappings(leader_vk, trigger_mappings, move |lang: Language| {
-        let before = imeswitch_windows::ime::current_source_id();
-        let result = switcher_cb.switch_to(&lang);
-        let after = imeswitch_windows::ime::current_source_id();
-        match result {
-            Ok(()) => log::info!(
-                "switch {}: {} -> {}",
-                lang,
-                before.as_deref().unwrap_or("<none>"),
-                after.as_deref().unwrap_or("<none>"),
-            ),
-            Err(e) => log::error!(
-                "switch {} failed: {} (was: {})",
-                lang,
-                e,
-                before.as_deref().unwrap_or("<none>"),
-            ),
-        }
-    })
-    .map_err(|e| anyhow::anyhow!("hook install failed: {e}"))?;
+    let _hook =
+        EventHook::install_with_mappings(leader_vk, trigger_mappings, move |lang: Language| {
+            let before = imeswitch_windows::ime::current_source_id();
+            let result = switcher_cb.switch_to(&lang);
+            let after = imeswitch_windows::ime::current_source_id();
+            match result {
+                Ok(()) => log::info!(
+                    "switch {}: {} -> {}",
+                    lang,
+                    before.as_deref().unwrap_or("<none>"),
+                    after.as_deref().unwrap_or("<none>"),
+                ),
+                Err(e) => log::error!(
+                    "switch {} failed: {} (was: {})",
+                    lang,
+                    e,
+                    before.as_deref().unwrap_or("<none>"),
+                ),
+            }
+        })
+        .map_err(|e| anyhow::anyhow!("hook install failed: {e}"))?;
 
     log::info!("imeswitchd running. Press Ctrl-C to stop.");
     run_loop();

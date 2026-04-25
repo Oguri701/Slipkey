@@ -81,13 +81,7 @@ mod tests {
     fn custom_leader_remaps_vk() {
         let comma_vk = leader_vk_for(',').unwrap();
         assert_eq!(vk_to_key_with_leader(comma_vk, comma_vk), Key::Leader);
-        assert_eq!(
-            vk_to_key_with_leader(VK_SEMICOLON, comma_vk),
-            Key::Other
-        );
-        assert_eq!(
-            key_to_vk_with_leader(Key::Leader, comma_vk),
-            Some(comma_vk)
-        );
+        assert_eq!(vk_to_key_with_leader(VK_SEMICOLON, comma_vk), Key::Other);
+        assert_eq!(key_to_vk_with_leader(Key::Leader, comma_vk), Some(comma_vk));
     }
 }
