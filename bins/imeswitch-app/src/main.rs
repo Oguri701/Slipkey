@@ -2,11 +2,10 @@ mod commands;
 
 use std::sync::{Arc, Mutex};
 
-use anyhow::Context;
 use imeswitch_core::Language;
 use imeswitch_macos::config;
 use imeswitch_macos::keymap::{leader_keycode_for, KC_SEMICOLON};
-use imeswitch_macos::{EventHook, ImeSwitcher, Mapping};
+use imeswitch_macos::{request_accessibility_permission, EventHook, ImeSwitcher, Mapping};
 use tauri::tray::TrayIcon;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
@@ -73,9 +72,17 @@ fn main() {
                 tray_visible: Mutex::new(false),
                 tray: Mutex::new(None),
             };
-            state
-                .install_hook(mapping)
-                .context("failed to install keyboard hook")?;
+            // If Accessibility is not granted, CGEventTap will fail.
+            // Request permission (shows the system dialog) and continue —
+            // the hook will be inactive until the user grants access and
+            // relaunches the app.
+            let hook_failed = state.install_hook(mapping).is_err();
+            if hook_failed {
+                // Trigger the system "Accessibility" permission dialog so the
+                // user lands on the right System Settings pane. The app stays
+                // running; the hook will work after they grant access and relaunch.
+                request_accessibility_permission();
+            }
             app.manage(state);
             let app_state = app.state::<AppState>();
             commands::set_tray_visible(app.handle(), &app_state, true)
@@ -83,6 +90,12 @@ fn main() {
 
             let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT), Code::Comma);
             app.global_shortcut().register(shortcut)?;
+
+            // Open settings if the hook couldn't start (typically first run
+            // before Accessibility is granted).
+            if hook_failed {
+                show_settings(app.handle());
+            }
 
             Ok(())
         })
