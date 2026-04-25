@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Welcome to imeswitch</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        padding: 28px 32px 24px;
+        background: Canvas;
+        color: CanvasText;
+      }
+      h1 {
+        margin: 0 0 6px;
+        font-size: 22px;
+      }
+      .lede {
+        color: color-mix(in srgb, CanvasText 65%, transparent);
+        margin: 0 0 22px;
+      }
+      .leader-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+      .leader-row input {
+        width: 58px;
+        text-align: center;
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 70px 1fr;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 0;
+        border-bottom: 1px solid color-mix(in srgb, CanvasText 12%, transparent);
+      }
+      .row .lang {
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+      input,
+      select {
+        box-sizing: border-box;
+        width: 100%;
+        border-radius: 6px;
+        border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+        padding: 6px 8px;
+        background: Field;
+        color: FieldText;
+      }
+      .empty {
+        color: color-mix(in srgb, CanvasText 60%, transparent);
+        font-style: italic;
+        padding: 18px 0;
+      }
+      .actions {
+        margin-top: 22px;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+      .actions button {
+        border-radius: 6px;
+        border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+        background: ButtonFace;
+        color: ButtonText;
+        padding: 7px 14px;
+      }
+      .actions button.primary {
+        background: AccentColor;
+        color: AccentColorText;
+        border-color: AccentColor;
+      }
+      .error {
+        color: #c0392b;
+        margin-top: 12px;
+        min-height: 1.2em;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Welcome to imeswitch</h1>
+    <p class="lede">
+      We detected the input sources installed on this Mac. Confirm the source for each language and pick a leader key.
+    </p>
+
+    <div class="leader-row">
+      <label for="leader">Leader</label>
+      <input id="leader" maxlength="1" value=";" />
+      <span class="lede">Type this character before a language code (default <code>;</code>).</span>
+    </div>
+
+    <div id="rows"></div>
+    <div id="empty" class="empty" style="display: none">
+      No selectable input sources with language metadata were detected. You can configure mappings later in Settings.
+    </div>
+
+    <div class="error" id="error"></div>
+    <div class="actions">
+      <button id="skip">Skip for now</button>
+      <button id="save" class="primary">Save and continue</button>
+    </div>
+
+    <script>
+      const invoke = window.__TAURI__.core.invoke;
+      const rowsEl = document.querySelector("#rows");
+      const errorEl = document.querySelector("#error");
+      let buckets = new Map();
+
+      async function load() {
+        const detected = await invoke("discover_imes");
+        for (const item of detected) {
+          if (!buckets.has(item.language)) buckets.set(item.language, []);
+          buckets.get(item.language).push(item);
+        }
+
+        if (buckets.size === 0) {
+          document.querySelector("#empty").style.display = "block";
+          return;
+        }
+
+        for (const [language, candidates] of [...buckets.entries()].sort()) {
+          const row = document.createElement("div");
+          row.className = "row";
+          row.dataset.language = language;
+          row.innerHTML = `
+            <span class="lang">${escapeHtml(language)}</span>
+            <select></select>
+          `;
+          const select = row.querySelector("select");
+          for (const candidate of candidates) {
+            const option = document.createElement("option");
+            option.value = candidate.source_id;
+            option.textContent = `${candidate.name} (${candidate.source_id})`;
+            select.appendChild(option);
+          }
+          rowsEl.appendChild(row);
+        }
+      }
+
+      async function save() {
+        errorEl.textContent = "";
+        const mappings = [...rowsEl.querySelectorAll(".row")].map((row) => ({
+          language: row.dataset.language,
+          prefix: row.dataset.language,
+          source: row.querySelector("select").value,
+        }));
+        if (mappings.length === 0) {
+          errorEl.textContent = "Nothing to save. Skip and configure later from Settings.";
+          return;
+        }
+        const leader = document.querySelector("#leader").value;
+        try {
+          await invoke("set_config", { leader, mappings });
+          await invoke("finish_wizard");
+        } catch (error) {
+          errorEl.textContent = String(error);
+        }
+      }
+
+      async function skip() {
+        await invoke("finish_wizard");
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
+      }
+
+      document.querySelector("#save").addEventListener("click", save);
+      document.querySelector("#skip").addEventListener("click", skip);
+
+      load();
+    </script>
+  </body>
+</html>

@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>imeswitch</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        font: 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        margin: 0;
+        background: Canvas;
+        color: CanvasText;
+      }
+      main {
+        display: grid;
+        grid-template-columns: 180px 1fr;
+        min-height: 100vh;
+      }
+      nav {
+        border-right: 1px solid color-mix(in srgb, CanvasText 14%, transparent);
+        padding: 22px 16px;
+      }
+      nav h1 {
+        font-size: 18px;
+        margin: 0 0 22px;
+      }
+      nav button {
+        width: 100%;
+        text-align: left;
+        border: 0;
+        border-radius: 6px;
+        padding: 8px 10px;
+        background: transparent;
+        color: inherit;
+      }
+      nav button.active {
+        background: color-mix(in srgb, AccentColor 18%, transparent);
+      }
+      section {
+        padding: 24px 28px;
+      }
+      h2 {
+        margin: 0 0 18px;
+        font-size: 20px;
+      }
+      .row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 12px 0;
+        border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+      }
+      .row label {
+        font-weight: 600;
+      }
+      .muted {
+        color: color-mix(in srgb, CanvasText 58%, transparent);
+        font-size: 12px;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        padding: 8px 6px;
+        text-align: left;
+        border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent);
+      }
+      input,
+      select {
+        width: 100%;
+        box-sizing: border-box;
+        border-radius: 6px;
+        border: 1px solid color-mix(in srgb, CanvasText 20%, transparent);
+        padding: 6px 8px;
+        background: Field;
+        color: FieldText;
+      }
+      .actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 16px;
+      }
+      .actions button,
+      .small {
+        border-radius: 6px;
+        border: 1px solid color-mix(in srgb, CanvasText 18%, transparent);
+        background: ButtonFace;
+        color: ButtonText;
+        padding: 7px 11px;
+      }
+      .hidden {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <nav>
+        <h1>imeswitch</h1>
+        <button class="active" data-tab="general">General</button>
+        <button data-tab="trigger">Triggers</button>
+        <button data-tab="about">About</button>
+      </nav>
+      <section id="general">
+        <h2>General</h2>
+        <div class="row">
+          <div>
+            <label for="autostart">Open at login</label>
+            <div class="muted">Start imeswitch automatically after signing in.</div>
+          </div>
+          <input id="autostart" type="checkbox" />
+        </div>
+        <div class="row">
+          <div>
+            <label for="menubar">Menu bar icon</label>
+            <div class="muted">The Dock icon stays hidden; this only controls the menu bar icon.</div>
+          </div>
+          <input id="menubar" type="checkbox" />
+        </div>
+        <div class="row">
+          <div>
+            <label>Settings shortcut</label>
+            <div class="muted">Command Option Comma</div>
+          </div>
+        </div>
+      </section>
+      <section id="trigger" class="hidden">
+        <h2>Triggers</h2>
+        <div class="muted" id="config-path"></div>
+        <div class="row">
+          <div>
+            <label for="leader">Leader key</label>
+            <div class="muted">Single character typed before a language code, e.g. <code>;</code> or <code>,</code>.</div>
+          </div>
+          <input id="leader" maxlength="1" style="width: 64px; text-align: center" />
+        </div>
+        <table>
+          <thead>
+            <tr>
+              <th>Language</th>
+              <th>Prefix</th>
+              <th>Input source</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="mappings"></tbody>
+        </table>
+        <div class="actions">
+          <button id="add">Add</button>
+          <button id="discover">Detect</button>
+          <button id="save">Save</button>
+        </div>
+        <div class="muted error" id="save-error" style="margin-top: 10px; color: #c0392b"></div>
+      </section>
+      <section id="about" class="hidden">
+        <h2>About</h2>
+        <p>Type a leader plus a language prefix in any text field to switch input sources.</p>
+        <p class="muted">Default triggers are ;en, ;ja, and ;zh.</p>
+      </section>
+    </main>
+    <script>
+      const invoke = window.__TAURI__.core.invoke;
+      const mappingsBody = document.querySelector("#mappings");
+      let detected = [];
+
+      document.querySelectorAll("nav button").forEach((button) => {
+        button.addEventListener("click", () => {
+          document.querySelectorAll("nav button").forEach((b) => b.classList.remove("active"));
+          button.classList.add("active");
+          document.querySelectorAll("section").forEach((section) => section.classList.add("hidden"));
+          document.querySelector(`#${button.dataset.tab}`).classList.remove("hidden");
+        });
+      });
+
+      document.querySelector("#autostart").addEventListener("change", async (event) => {
+        await invoke("set_autostart", { enabled: event.target.checked });
+      });
+      document.querySelector("#menubar").addEventListener("change", async (event) => {
+        await invoke("set_menubar_visible", { visible: event.target.checked });
+      });
+      document.querySelector("#add").addEventListener("click", () => addRow({ language: "", prefix: "", source: "" }));
+      document.querySelector("#discover").addEventListener("click", detect);
+      document.querySelector("#save").addEventListener("click", save);
+
+      async function load() {
+        const config = await invoke("get_config");
+        document.querySelector("#config-path").textContent = config.path;
+        document.querySelector("#leader").value = config.leader || ";";
+        mappingsBody.replaceChildren();
+        config.mappings.forEach(addRow);
+        document.querySelector("#autostart").checked = await invoke("get_autostart");
+        detected = await invoke("discover_imes");
+      }
+
+      function addRow(mapping) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td><input class="language" maxlength="2" value="${escapeHtml(mapping.language)}" /></td>
+          <td><input class="prefix" value="${escapeHtml(mapping.prefix)}" /></td>
+          <td><input class="source" value="${escapeHtml(mapping.source)}" /></td>
+          <td><button class="small">Remove</button></td>
+        `;
+        tr.querySelector("button").addEventListener("click", () => tr.remove());
+        mappingsBody.appendChild(tr);
+      }
+
+      async function detect() {
+        detected = await invoke("discover_imes");
+        const byLanguage = new Map();
+        for (const item of detected) {
+          if (!byLanguage.has(item.language)) byLanguage.set(item.language, item);
+        }
+        mappingsBody.replaceChildren();
+        [...byLanguage.values()].forEach((item) => {
+          addRow({ language: item.language, prefix: item.language, source: item.source_id });
+        });
+      }
+
+      async function save() {
+        const errorEl = document.querySelector("#save-error");
+        errorEl.textContent = "";
+        const mappings = [...mappingsBody.querySelectorAll("tr")].map((tr) => ({
+          language: tr.querySelector(".language").value.trim().toLowerCase(),
+          prefix: tr.querySelector(".prefix").value.trim().toLowerCase(),
+          source: tr.querySelector(".source").value.trim(),
+        }));
+        const leader = document.querySelector("#leader").value;
+        try {
+          const config = await invoke("set_config", { leader, mappings });
+          document.querySelector("#leader").value = config.leader;
+          mappingsBody.replaceChildren();
+          config.mappings.forEach(addRow);
+        } catch (error) {
+          errorEl.textContent = String(error);
+        }
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;");
+      }
+
+      load();
+    </script>
+  </body>
+</html>

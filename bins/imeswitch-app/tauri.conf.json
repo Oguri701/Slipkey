@@ -1,0 +1,46 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "imeswitch",
+  "version": "0.1.0",
+  "identifier": "dev.zlb.imeswitch",
+  "build": {
+    "frontendDist": "ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "title": "imeswitch",
+        "label": "settings",
+        "url": "index.html",
+        "width": 760,
+        "height": 560,
+        "visible": false,
+        "resizable": true
+      },
+      {
+        "title": "Welcome to imeswitch",
+        "label": "wizard",
+        "url": "wizard.html",
+        "width": 640,
+        "height": 520,
+        "visible": false,
+        "resizable": false
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "icon": ["icons/icon.icns"],
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "-",
+      "hardenedRuntime": false,
+      "infoPlist": "Info.plist"
+    }
+  }
+}

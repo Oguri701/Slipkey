@@ -4,6 +4,7 @@ members = [
     "crates/imeswitch-core",
     "crates/imeswitch-macos",
     "crates/imeswitch-windows",
+    "bins/imeswitch-app",
     "bins/imeswitchd",
 ]
 
