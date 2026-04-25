@@ -12,7 +12,7 @@ A keyboard daemon: user types `;en` / `;ja` / `;zh` (ISO-639-1 codes) in any tex
 # workspace build / test
 cargo build --release
 cargo test --workspace
-cargo check --target x86_64-pc-windows-msvc
+cargo check -p imeswitchd --target x86_64-pc-windows-msvc
 
 # run core-only tests (platform-independent state machine)
 cargo test -p imeswitch-core
@@ -108,7 +108,7 @@ Diagnostic already added: `main.rs` logs `switch {Lang}: {before_id} -> {after_i
 
 ### M1 — Windows parity
 
-Status: first implementation is in place and cross-checks with `cargo check --target x86_64-pc-windows-msvc`. It still needs functional testing on Windows for real hook behavior, IME switching, composition detection, and app compatibility.
+Status: first implementation is in place and cross-checks with `cargo check -p imeswitchd --target x86_64-pc-windows-msvc`. It still needs functional testing on Windows for real hook behavior, IME switching, composition detection, and app compatibility.
 
 Scope: reach functional parity with the current macOS build on Windows, sharing `imeswitch-core` unchanged.
 
