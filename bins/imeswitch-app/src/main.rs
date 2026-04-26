@@ -156,27 +156,54 @@ fn main() {
             commands::request_accessibility,
         ])
         .on_window_event(|window, event| {
-            if matches!(event, WindowEvent::CloseRequested { .. }) {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                // Without prevent_close the NSWindow is destroyed; the next
+                // show_settings() call would find no window and silently
+                // no-op. Hide it instead so we can re-show the same instance.
+                api.prevent_close();
                 let _ = window.hide();
+                #[cfg(target_os = "macos")]
+                {
+                    // Mos pattern: dock icon follows window visibility. With
+                    // no window on screen the app is purely a background
+                    // helper, so flip back to Accessory and the dock entry
+                    // disappears.
+                    let _ = window
+                        .app_handle()
+                        .set_activation_policy(tauri::ActivationPolicy::Accessory);
+                }
             }
         })
         .build(tauri::generate_context!())
         .expect("error while building imeswitch app")
         .run(|app, event| {
-            // The app keeps running with LSUIElement + a tray icon after the
-            // settings window is closed. macOS fires Reopen when the user
-            // double-clicks the bundle again or clicks the dock icon (which
-            // we don't have, but Finder/Spotlight launches still go through
-            // here). Without this handler the second launch silently no-ops
-            // and the user thinks the app is broken.
-            if let tauri::RunEvent::Reopen { .. } = event {
-                show_settings(app);
+            // Reopen fires on Finder/Spotlight relaunches and on dock-icon
+            // clicks. Mirror Mos: if a window is already visible let AppKit
+            // handle it; otherwise show settings (only when Accessibility is
+            // granted — re-showing the permission banner on every Reopen
+            // gets in the way).
+            if let tauri::RunEvent::Reopen {
+                has_visible_windows,
+                ..
+            } = event
+            {
+                if !has_visible_windows && is_accessibility_trusted() {
+                    show_settings(app);
+                }
             }
         });
 }
 
 pub(crate) fn show_settings<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(window) = app.get_webview_window("settings") {
+        #[cfg(target_os = "macos")]
+        {
+            // Mos pattern: showing a window flips the activation policy to
+            // Regular so the dock icon, cmd-tab entry, and proper window
+            // focus all behave like a normal app. We flip back to Accessory
+            // in CloseRequested.
+            let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+        }
         let _ = window.show();
         let _ = window.set_focus();
     }
