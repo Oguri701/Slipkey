@@ -930,6 +930,13 @@
       const uiLanguageSelect = document.querySelector("#ui-language");
       let uiLanguage = initialLanguage();
       let detected = [];
+      // These two `let`s must be declared BEFORE applyLanguage runs — applyLanguage
+      // reads `lastStatus` to re-render the status pill on language change. With
+      // `let`, the binding is in the temporal dead zone until this line, so calling
+      // applyLanguage above this point throws ReferenceError and silently kills the
+      // whole init block (event listeners never bind, load() never fires).
+      let lastStatus = null;
+      let lastConfigMappings = [];
 
       applyLanguage(uiLanguage);
 
@@ -956,8 +963,6 @@
       document.querySelector("#grant-accessibility").addEventListener("click", async () => {
         await invoke("request_accessibility").catch(() => null);
       });
-
-      let lastConfigMappings = [];
 
       if (listenEvent) {
         listenEvent("hook-status", (event) => {
@@ -999,7 +1004,6 @@
         }
       }
 
-      let lastStatus = null;
       function applyStatus(status) {
         if (!status) return;
         lastStatus = status;
