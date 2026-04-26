@@ -76,6 +76,14 @@ impl AppState {
 
 fn main() {
     tauri::Builder::default()
+        // Single-instance plugin must be the first plugin registered. When a
+        // second launch happens (Spotlight, Finder, login item), the new
+        // process detects the lock, fires this callback in the original
+        // process, and exits. Prevents tray-icon stacking and duplicate
+        // event taps.
+        .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
+            show_settings(app);
+        }))
         .plugin(tauri_plugin_autostart::init(
             MacosLauncher::LaunchAgent,
             Some(vec![]),
