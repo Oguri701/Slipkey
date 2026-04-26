@@ -90,6 +90,15 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
+            // Belt-and-braces with Info.plist's LSUIElement=true. macOS
+            // Launch Services caches activation policy per bundle id; if the
+            // app was ever launched without LSUIElement, the dock-icon entry
+            // sticks until we explicitly request Accessory at runtime.
+            #[cfg(target_os = "macos")]
+            {
+                let _ = app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+
             let (mapping, _outcome) = config::load_or_default();
             let state = AppState {
                 hook: Mutex::new(None),
