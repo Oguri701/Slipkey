@@ -719,6 +719,7 @@
                 </div>
               </div>
               <div class="toolbar-actions">
+                <button class="button" id="reset-default" data-i18n="actions.resetDefault">Reset to defaults</button>
                 <button class="button" id="discover" data-i18n="actions.detect">Detect</button>
               </div>
             </div>
@@ -803,6 +804,8 @@
           "about.explain": "It avoids memorizing different OS shortcuts, reduces wrong-language typing, and keeps the same habit when you move between your Mac and Windows PC.",
           "actions.save": "Save",
           "actions.detect": "Detect",
+          "actions.resetDefault": "Reset to defaults",
+          "messages.reset": "Reverted to default leader and prefixes. Click Save to apply.",
           "messages.detected": "Detected {count} input source mappings.",
           "messages.saved": "Saved. New shortcuts are active now.",
           "messages.noInstalled": "No installed input sources were detected.",
@@ -845,6 +848,8 @@
           "about.explain": "把不同系统、不同输入法的切换动作统一成同一种键入触发码，少记一组系统快捷键，也少了切错语言后打了一串才发现的尴尬。",
           "actions.save": "保存",
           "actions.detect": "检测",
+          "actions.resetDefault": "恢复默认",
+          "messages.reset": "已恢复默认触发符和前缀，点击保存生效。",
           "messages.detected": "已检测到 {count} 个输入源映射。",
           "messages.saved": "已保存，新的触发码已生效。",
           "messages.noInstalled": "没有检测到已安装的输入法。",
@@ -887,6 +892,8 @@
           "about.explain": "OS ごとに違う切り替えショートカットを覚える必要を減らし、違う言語で入力してから気づくミスを防ぎます。Mac と Windows PC の間でも同じ操作感で使えます。",
           "actions.save": "保存",
           "actions.detect": "検出",
+          "actions.resetDefault": "既定値に戻す",
+          "messages.reset": "リーダーキーと接頭辞を既定値に戻しました。保存ボタンで反映されます。",
           "messages.detected": "{count} 件の入力ソースマッピングを検出しました。",
           "messages.saved": "保存しました。新しいトリガーは有効です。",
           "messages.noInstalled": "インストール済み入力ソースが検出されませんでした。",
@@ -962,6 +969,7 @@
 
       document.querySelector("#discover").addEventListener("click", detect);
       document.querySelector("#save").addEventListener("click", save);
+      document.querySelector("#reset-default").addEventListener("click", resetToDefault);
       document.querySelector("#grant-accessibility").addEventListener("click", async () => {
         await invoke("request_accessibility").catch(() => null);
       });
@@ -1086,6 +1094,15 @@
           renderInstalledMappings(lastConfigMappings);
           setMessage(t("messages.saved"));
         });
+      }
+
+      function resetToDefault() {
+        // Wipe leader back to ";" and re-render every detected language with
+        // its default prefix (the language code lowercased). Doesn't touch
+        // disk — user still needs to click Save to persist.
+        document.querySelector("#leader").value = ";";
+        renderInstalledMappings([]);
+        setMessage(t("messages.reset"));
       }
 
       function mergeMappings(primary, fallback) {

@@ -4,8 +4,9 @@ use imeswitch_macos::ime::{discover_installed_imes, Mapping, MappingEntry, DEFAU
 use imeswitch_macos::keymap::leader_keycode_for;
 use imeswitch_macos::{is_accessibility_trusted, request_accessibility_permission};
 use serde::{Deserialize, Serialize};
+use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 use crate::{show_settings, AppState};
@@ -107,20 +108,36 @@ pub fn set_menubar_visible(
 pub fn set_tray_visible(app: &AppHandle, state: &AppState, visible: bool) -> Result<(), String> {
     let mut tray = state.tray.lock().unwrap();
     if visible && tray.is_none() {
-        let handle = app.clone();
-        // Without an explicit icon, TrayIconBuilder constructs a tray entry
-        // with no glyph — it occupies a slot in the menu bar but renders
-        // nothing visible. Reuse the bundle's default window icon.
         let icon = app
             .default_window_icon()
             .cloned()
             .ok_or_else(|| "no default window icon configured".to_string())?;
+        // Mos pattern: a left click on the status item opens a small menu
+        // (Preferences / Quit), nothing else. The previous on_tray_icon_event
+        // closure fired on every event including hover/move/enter, which is
+        // what made the window pop while just sliding the cursor across the
+        // menu bar.
+        let preferences = MenuItem::with_id(
+            app,
+            "preferences",
+            "Preferences",
+            true,
+            None::<&str>,
+        )
+        .map_err(|error| error.to_string())?;
+        let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)
+            .map_err(|error| error.to_string())?;
+        let menu = Menu::with_items(app, &[&preferences, &quit])
+            .map_err(|error| error.to_string())?;
         let built = TrayIconBuilder::new()
             .icon(icon)
             .icon_as_template(true)
             .tooltip("Slipkey")
-            .on_tray_icon_event(move |_tray, _event| {
-                show_settings(&handle);
+            .menu(&menu)
+            .on_menu_event(|app, event| match event.id.as_ref() {
+                "preferences" => show_settings(app),
+                "quit" => app.exit(0),
+                _ => {}
             })
             .build(app)
             .map_err(|error| error.to_string())?;

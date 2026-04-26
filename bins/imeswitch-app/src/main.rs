@@ -75,12 +75,19 @@ impl AppState {
 }
 
 fn main() {
+    // Belt-and-braces with single-instance plugin: terminate any other
+    // imeswitch-app processes already running. The plugin only catches
+    // launches that happen AFTER the lock is created, so a leftover
+    // instance from an older build (or a stuck process whose tray entry
+    // never went away) wouldn't be cleaned up otherwise. Mos does the
+    // same thing in preventMultiRunning(killExist: true).
+    kill_other_instances();
+
     tauri::Builder::default()
         // Single-instance plugin must be the first plugin registered. When a
         // second launch happens (Spotlight, Finder, login item), the new
         // process detects the lock, fires this callback in the original
-        // process, and exits. Prevents tray-icon stacking and duplicate
-        // event taps.
+        // process, and exits.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_settings(app);
         }))
@@ -269,4 +276,25 @@ fn spawn_hook_watcher(app: AppHandle, hook_initially_failed: bool) {
 struct StatusPayload {
     hook_installed: bool,
     accessibility_granted: bool,
+}
+
+fn kill_other_instances() {
+    let my_pid = std::process::id();
+    let Ok(output) = std::process::Command::new("pgrep")
+        .args(["-x", "imeswitch-app"])
+        .output()
+    else {
+        return;
+    };
+    for line in String::from_utf8_lossy(&output.stdout).lines() {
+        let Ok(pid) = line.trim().parse::<u32>() else {
+            continue;
+        };
+        if pid == my_pid {
+            continue;
+        }
+        let _ = std::process::Command::new("kill")
+            .args(["-TERM", &pid.to_string()])
+            .output();
+    }
 }
