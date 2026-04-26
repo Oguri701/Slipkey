@@ -1,24 +1,13 @@
-use core_foundation_sys::base::{kCFAllocatorDefault, kCFAllocatorNull, CFTypeRef};
+use core_foundation::base::TCFType;
+use core_foundation::boolean::CFBoolean;
+use core_foundation::dictionary::CFDictionary;
+use core_foundation::string::CFString;
 use core_foundation_sys::dictionary::CFDictionaryRef;
-use core_foundation_sys::number::kCFBooleanTrue;
-use core_foundation_sys::string::{CFStringCreateWithCStringNoCopy, kCFStringEncodingUTF8};
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     fn AXIsProcessTrusted() -> bool;
     fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> bool;
-}
-
-extern "C" {
-    fn CFDictionaryCreate(
-        allocator: core_foundation_sys::base::CFAllocatorRef,
-        keys: *const CFTypeRef,
-        values: *const CFTypeRef,
-        num_values: isize,
-        key_callbacks: *const std::ffi::c_void,
-        value_callbacks: *const std::ffi::c_void,
-    ) -> CFDictionaryRef;
-    fn CFRelease(cf: CFTypeRef);
 }
 
 pub fn is_accessibility_trusted() -> bool {
@@ -27,37 +16,12 @@ pub fn is_accessibility_trusted() -> bool {
 
 /// Returns true if Accessibility is already granted.
 /// If not granted, triggers the macOS permission dialog pointing the user
-/// to System Settings → Privacy & Security → Accessibility.
+/// to System Settings → Privacy & Security → Accessibility. The dialog only
+/// shows the first time per process; subsequent calls return false silently
+/// once the app has been added to (or revoked from) the trusted list.
 pub fn request_accessibility_permission() -> bool {
-    unsafe {
-        let key = CFStringCreateWithCStringNoCopy(
-            kCFAllocatorDefault,
-            b"AXTrustedCheckOptionPrompt\0".as_ptr() as *const _,
-            kCFStringEncodingUTF8,
-            kCFAllocatorNull,
-        );
-        if key.is_null() {
-            return AXIsProcessTrusted();
-        }
-        let value = kCFBooleanTrue as CFTypeRef;
-        let keys = [key as CFTypeRef];
-        let values = [value];
-        let dict = CFDictionaryCreate(
-            kCFAllocatorDefault,
-            keys.as_ptr(),
-            values.as_ptr(),
-            1,
-            std::ptr::null(),
-            std::ptr::null(),
-        );
-        let trusted = if dict.is_null() {
-            AXIsProcessTrusted()
-        } else {
-            let result = AXIsProcessTrustedWithOptions(dict);
-            CFRelease(dict as CFTypeRef);
-            result
-        };
-        CFRelease(key as CFTypeRef);
-        trusted
-    }
+    let key = CFString::from_static_string("AXTrustedCheckOptionPrompt");
+    let value = CFBoolean::true_value();
+    let dict = CFDictionary::from_CFType_pairs(&[(key.as_CFType(), value.as_CFType())]);
+    unsafe { AXIsProcessTrustedWithOptions(dict.as_concrete_TypeRef()) }
 }

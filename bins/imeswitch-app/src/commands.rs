@@ -144,7 +144,18 @@ pub fn get_status(state: State<'_, AppState>) -> StatusDto {
 
 #[tauri::command]
 pub fn request_accessibility() -> bool {
-    request_accessibility_permission()
+    let trusted = request_accessibility_permission();
+    // AXIsProcessTrustedWithOptions only opens the system dialog the FIRST
+    // time the process asks. Once the app has been added to (or revoked from)
+    // the trusted list, subsequent calls return false silently. To make the
+    // "Open System Settings" button reliable on repeat clicks, also open the
+    // Accessibility pane directly via URL when permission is still missing.
+    if !trusted {
+        let _ = std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .spawn();
+    }
+    trusted
 }
 
 fn dto_from_mapping(mapping: &Mapping) -> ConfigDto {

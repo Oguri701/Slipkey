@@ -1,5 +1,6 @@
 mod commands;
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -20,10 +21,22 @@ pub struct AppState {
     mapping: Mutex<Mapping>,
     tray_visible: Mutex<bool>,
     tray: Mutex<Option<TrayIcon>>,
+    // Set while a hook (re)install is queued on the main thread. The watcher
+    // thread observes hook_installed=false from a worker thread; without this
+    // guard, two consecutive 2 s ticks could enqueue two install closures
+    // before the first runs, causing redundant tap creation.
+    install_in_flight: AtomicBool,
 }
 
 struct HookHolder(#[allow(dead_code)] EventHook);
 
+// EventHook owns CF objects whose threading rules require creation and drop on
+// the AppKit main thread. The Send/Sync impl is sound because:
+// - install_hook always runs on the main thread (setup() at startup, and
+//   run_on_main_thread() from the watcher's reinstall path).
+// - The watcher thread only reads `hook_installed()` (Mutex lock + bool); it
+//   never drops the EventHook itself.
+// Future contributors: do not drop a HookHolder from a non-main thread.
 unsafe impl Send for HookHolder {}
 unsafe impl Sync for HookHolder {}
 
@@ -83,6 +96,7 @@ fn main() {
                 mapping: Mutex::new(mapping.clone()),
                 tray_visible: Mutex::new(false),
                 tray: Mutex::new(None),
+                install_in_flight: AtomicBool::new(false),
             };
             // If Accessibility is not granted, CGEventTap will fail.
             // Request permission (shows the system dialog) and continue —
@@ -141,13 +155,9 @@ pub(crate) fn show_settings<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 }
 
 fn spawn_hook_watcher(app: AppHandle, hook_initially_failed: bool) {
-    // Emit the initial status so the frontend can render the right banner.
-    let initial_payload = StatusPayload {
-        hook_installed: !hook_initially_failed,
-        accessibility_granted: is_accessibility_trusted(),
-    };
-    let _ = app.emit("hook-status", initial_payload);
-
+    // No initial emit here. The frontend's load() always seeds the UI from
+    // invoke("get_status"), which is the canonical source. The watcher's diff
+    // below is the only place that emits hook-status thereafter.
     thread::spawn(move || {
         let mut last_status = (
             !hook_initially_failed,
@@ -162,22 +172,29 @@ fn spawn_hook_watcher(app: AppHandle, hook_initially_failed: bool) {
             // Try to (re)install the hook on the main thread when Accessibility
             // becomes available. CGEventTap must be created on a thread that
             // pumps a CFRunLoop, which is the Tauri/AppKit main thread.
-            if !hook_installed && trusted {
+            // The AtomicBool gate prevents queuing a second install closure
+            // while the previous one is still pending on the main thread.
+            if !hook_installed
+                && trusted
+                && !state
+                    .install_in_flight
+                    .swap(true, Ordering::AcqRel)
+            {
                 let mapping = state.current_mapping();
                 let app_for_main = app.clone();
-                let _ = app.run_on_main_thread(move || {
+                let dispatch = app.run_on_main_thread(move || {
                     let state = app_for_main.state::<AppState>();
                     if let Err(e) = state.install_hook(mapping) {
                         log::error!("hook re-install failed: {e}");
                     } else {
                         log::info!("hook installed after Accessibility was granted");
-                        let payload = StatusPayload {
-                            hook_installed: true,
-                            accessibility_granted: true,
-                        };
-                        let _ = app_for_main.emit("hook-status", payload);
                     }
+                    state.install_in_flight.store(false, Ordering::Release);
                 });
+                if dispatch.is_err() {
+                    // Closure won't run; release the gate ourselves.
+                    state.install_in_flight.store(false, Ordering::Release);
+                }
             }
 
             let new_status = (state.hook_installed(), trusted);
