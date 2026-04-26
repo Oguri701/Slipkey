@@ -450,6 +450,43 @@
         text-align: center;
       }
 
+      .banner {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 12px;
+        align-items: center;
+        border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line));
+        background: color-mix(in srgb, var(--danger) 8%, var(--panel));
+        color: var(--text);
+        border-radius: 8px;
+        padding: 12px 14px;
+        margin-bottom: 12px;
+        font-size: 12.5px;
+      }
+
+      .banner h3 {
+        margin: 0 0 2px 0;
+        font-size: 13px;
+        font-weight: 650;
+      }
+
+      .banner.hidden {
+        display: none;
+      }
+
+      .banner .help {
+        color: var(--muted);
+      }
+
+      .status-pill.warn {
+        background: color-mix(in srgb, var(--danger) 12%, var(--panel-2));
+        color: var(--danger);
+      }
+
+      .status-pill.warn .status-dot {
+        background: var(--danger);
+      }
+
       .about-copy {
         display: grid;
         gap: 10px;
@@ -603,8 +640,16 @@
             </div>
             <div class="status-pill" id="runtime-status">
               <span class="status-dot"></span>
-              <span data-i18n="status.ready">Ready</span>
+              <span id="runtime-status-text" data-i18n="status.ready">Ready</span>
             </div>
+          </div>
+
+          <div class="banner hidden" id="permission-banner">
+            <div>
+              <h3 data-i18n="permission.title">Accessibility permission required</h3>
+              <div class="help" data-i18n="permission.help">Slipkey needs Accessibility access to detect your typed shortcut and switch input sources.</div>
+            </div>
+            <button class="button primary" id="grant-accessibility" data-i18n="permission.button">Open settings</button>
           </div>
 
           <div class="panel">
@@ -763,6 +808,10 @@
           "aria.triggerPrefix": "Trigger prefix",
           "aria.inputSourceId": "Input source id",
           "aria.removeMapping": "Remove mapping",
+          "status.needPermission": "Permission needed",
+          "permission.title": "Accessibility permission required",
+          "permission.help": "Slipkey needs Accessibility access to detect your typed shortcut and switch input sources. After granting access in System Settings, the daemon starts automatically — no restart needed.",
+          "permission.button": "Open System Settings",
         },
         zh: {
           "nav.general": "通用",
@@ -801,6 +850,10 @@
           "aria.triggerPrefix": "触发前缀",
           "aria.inputSourceId": "输入源 ID",
           "aria.removeMapping": "删除映射",
+          "status.needPermission": "缺少权限",
+          "permission.title": "需要辅助功能权限",
+          "permission.help": "Slipkey 需要辅助功能权限来识别键入的触发码并切换输入法。在系统设置中开启后，守护进程会自动启动，无需重启。",
+          "permission.button": "打开系统设置",
         },
         ja: {
           "nav.general": "一般",
@@ -839,6 +892,10 @@
           "aria.triggerPrefix": "トリガー接頭辞",
           "aria.inputSourceId": "入力ソース ID",
           "aria.removeMapping": "マッピングを削除",
+          "status.needPermission": "権限が必要",
+          "permission.title": "アクセシビリティ権限が必要",
+          "permission.help": "Slipkey は入力したトリガーを検知して入力ソースを切り替えるためにアクセシビリティ権限が必要です。システム設定で許可するとデーモンが自動で起動し、再起動は不要です。",
+          "permission.button": "システム設定を開く",
         },
       };
 
@@ -855,6 +912,8 @@
           if (command === "get_autostart") return false;
           if (command === "get_menubar_visible") return true;
           if (command === "discover_imes") return structuredClone(mockDetected);
+          if (command === "get_status") return { hook_installed: true, accessibility_granted: true };
+          if (command === "request_accessibility") return false;
           if (command === "set_config") {
             mockConfig.leader = payload.leader || ";";
             mockConfig.mappings = payload.mappings;
@@ -863,6 +922,7 @@
           if (command === "set_autostart" || command === "set_menubar_visible") return null;
           return null;
         });
+      const listenEvent = window.__TAURI__?.event?.listen;
 
       const mappingsEl = document.querySelector("#mappings");
       const saveMessage = document.querySelector("#save-message");
@@ -893,6 +953,17 @@
 
       document.querySelector("#discover").addEventListener("click", detect);
       document.querySelector("#save").addEventListener("click", save);
+      document.querySelector("#grant-accessibility").addEventListener("click", async () => {
+        await invoke("request_accessibility").catch(() => null);
+      });
+
+      let lastConfigMappings = [];
+
+      if (listenEvent) {
+        listenEvent("hook-status", (event) => {
+          applyStatus(event.payload);
+        });
+      }
 
       function selectTab(tab) {
         document.querySelectorAll(".nav-button").forEach((button) => {
@@ -906,15 +977,41 @@
       async function load() {
         try {
           const config = await invoke("get_config");
+          lastConfigMappings = Array.isArray(config.mappings) ? config.mappings : [];
           document.querySelector("#leader").value = config.leader || ";";
           document.querySelector("#autostart").checked = await invoke("get_autostart");
           document.querySelector("#menubar").checked = await invoke("get_menubar_visible");
-          detected = await invoke("discover_imes");
+          try {
+            detected = await invoke("discover_imes");
+          } catch (error) {
+            detected = [];
+            setMessage(String(error), true);
+          }
           renderDetectedSources();
-          renderInstalledMappings(config.mappings);
+          renderInstalledMappings(lastConfigMappings);
         } catch (error) {
           setMessage(String(error), true);
         }
+        try {
+          applyStatus(await invoke("get_status"));
+        } catch (error) {
+          // ignore — banner stays hidden
+        }
+      }
+
+      let lastStatus = null;
+      function applyStatus(status) {
+        if (!status) return;
+        lastStatus = status;
+        const banner = document.querySelector("#permission-banner");
+        const pill = document.querySelector("#runtime-status");
+        const pillText = document.querySelector("#runtime-status-text");
+        const needsAttention = !status.hook_installed || !status.accessibility_granted;
+        banner.classList.toggle("hidden", !needsAttention);
+        pill.classList.toggle("warn", needsAttention);
+        pillText.textContent = needsAttention
+          ? t("status.needPermission")
+          : t("status.ready");
       }
 
       function renderMappings(rows) {
@@ -934,17 +1031,20 @@
           <select class="source-input source" aria-label="${escapeHtml(t("aria.inputSourceId"))}"></select>
         `;
         const sourceSelect = row.querySelector(".source");
+        const options = sources.map((source) => ({ value: source.source_id, label: source.name || source.source_id }));
+        // Always keep the saved source visible even when discovery hasn't seen it yet.
+        if (mapping.source && !options.some((option) => option.value === mapping.source)) {
+          options.unshift({ value: mapping.source, label: mapping.source });
+        }
         sourceSelect.replaceChildren(
-          ...sources.map((source) => {
-            const option = document.createElement("option");
-            option.value = source.source_id;
-            option.textContent = source.name || source.source_id;
-            return option;
+          ...options.map((option) => {
+            const node = document.createElement("option");
+            node.value = option.value;
+            node.textContent = option.label;
+            return node;
           }),
         );
-        sourceSelect.value = sources.some((source) => source.source_id === mapping.source)
-          ? mapping.source
-          : sources[0]?.source_id || mapping.source;
+        sourceSelect.value = mapping.source || options[0]?.value || "";
         mappingsEl.appendChild(row);
         updateEmptyState();
       }
@@ -953,7 +1053,9 @@
         await runAction(async () => {
           detected = await invoke("discover_imes");
           renderDetectedSources();
-          renderInstalledMappings(currentMappings());
+          // Merge currently visible rows with the saved config so users don't
+          // lose unsaved edits or rows that depend on the saved config.
+          renderInstalledMappings(mergeMappings(currentMappings(), lastConfigMappings));
           const count = uniqueLanguages(detected).length;
           setMessage(count ? t("messages.detected").replace("{count}", count) : t("messages.noInstalled"));
         });
@@ -973,10 +1075,29 @@
             mappings,
           });
 
+          lastConfigMappings = Array.isArray(config.mappings) ? config.mappings : [];
           document.querySelector("#leader").value = config.leader;
-          renderInstalledMappings(config.mappings);
+          renderInstalledMappings(lastConfigMappings);
           setMessage(t("messages.saved"));
         });
+      }
+
+      function mergeMappings(primary, fallback) {
+        const seen = new Set();
+        const result = [];
+        for (const mapping of primary || []) {
+          if (mapping && !seen.has(mapping.language)) {
+            seen.add(mapping.language);
+            result.push(mapping);
+          }
+        }
+        for (const mapping of fallback || []) {
+          if (mapping && !seen.has(mapping.language)) {
+            seen.add(mapping.language);
+            result.push(mapping);
+          }
+        }
+        return result;
       }
 
       async function runAction(action) {
@@ -1005,14 +1126,23 @@
       }
 
       function renderInstalledMappings(configMappings) {
-        const rows = uniqueLanguages(detected).map((language) => {
+        // Union of languages from both detected sources and the saved config so
+        // existing mappings stay visible even if Accessibility isn't granted yet
+        // (in which case discover_imes has run but the user wants to see what
+        // they already have configured).
+        const detectedLangs = uniqueLanguages(detected);
+        const configLangs = (configMappings || [])
+          .map((mapping) => mapping.language)
+          .filter((value, index, arr) => arr.indexOf(value) === index);
+        const languages = [...new Set([...detectedLangs, ...configLangs])].sort();
+        const rows = languages.map((language) => {
           const sources = detected.filter((item) => item.language === language);
-          const configured = configMappings.find(
+          const configured = (configMappings || []).find(
             (mapping) => mapping.language === language && sources.some((source) => source.source_id === mapping.source),
-          ) || configMappings.find((mapping) => mapping.language === language);
+          ) || (configMappings || []).find((mapping) => mapping.language === language);
           const source = sources.some((item) => item.source_id === configured?.source)
             ? configured.source
-            : sources[0]?.source_id || "";
+            : sources[0]?.source_id || configured?.source || "";
           return {
             language,
             prefix: configured?.prefix || defaultPrefix(language),
@@ -1072,6 +1202,9 @@
           row.querySelector(".source").setAttribute("aria-label", t("aria.inputSourceId"));
           row.querySelector(".language-badge").setAttribute("aria-label", t("aria.languageCode"));
         });
+        if (lastStatus) {
+          applyStatus(lastStatus);
+        }
       }
 
       function t(key) {

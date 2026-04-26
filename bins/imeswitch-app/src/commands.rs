@@ -2,6 +2,7 @@ use imeswitch_core::Language;
 use imeswitch_macos::config::{self, Config};
 use imeswitch_macos::ime::{discover_installed_imes, Mapping, MappingEntry, DEFAULT_LEADER};
 use imeswitch_macos::keymap::leader_keycode_for;
+use imeswitch_macos::{is_accessibility_trusted, request_accessibility_permission};
 use serde::{Deserialize, Serialize};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, State};
@@ -125,6 +126,25 @@ pub fn set_tray_visible(app: &AppHandle, state: &AppState, visible: bool) -> Res
 #[tauri::command]
 pub fn open_settings(app: AppHandle) {
     show_settings(&app);
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct StatusDto {
+    pub hook_installed: bool,
+    pub accessibility_granted: bool,
+}
+
+#[tauri::command]
+pub fn get_status(state: State<'_, AppState>) -> StatusDto {
+    StatusDto {
+        hook_installed: state.hook_installed(),
+        accessibility_granted: is_accessibility_trusted(),
+    }
+}
+
+#[tauri::command]
+pub fn request_accessibility() -> bool {
+    request_accessibility_permission()
 }
 
 fn dto_from_mapping(mapping: &Mapping) -> ConfigDto {

@@ -1,13 +1,17 @@
 mod commands;
 
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
 use imeswitch_core::Language;
 use imeswitch_macos::config;
 use imeswitch_macos::keymap::{leader_keycode_for, KC_SEMICOLON};
-use imeswitch_macos::{request_accessibility_permission, EventHook, ImeSwitcher, Mapping};
+use imeswitch_macos::{
+    is_accessibility_trusted, request_accessibility_permission, EventHook, ImeSwitcher, Mapping,
+};
 use tauri::tray::TrayIcon;
-use tauri::{Manager, WindowEvent};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent};
 use tauri_plugin_autostart::MacosLauncher;
 use tauri_plugin_global_shortcut::{Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState};
 
@@ -24,6 +28,14 @@ unsafe impl Send for HookHolder {}
 unsafe impl Sync for HookHolder {}
 
 impl AppState {
+    pub fn hook_installed(&self) -> bool {
+        self.hook.lock().unwrap().is_some()
+    }
+
+    pub fn current_mapping(&self) -> Mapping {
+        self.mapping.lock().unwrap().clone()
+    }
+
     fn install_hook(&self, mapping: Mapping) -> anyhow::Result<()> {
         // Drop the previous hook BEFORE installing the new one so the
         // CGEventTap is uninstalled and we don't double-hook the keyboard.
@@ -74,13 +86,9 @@ fn main() {
             };
             // If Accessibility is not granted, CGEventTap will fail.
             // Request permission (shows the system dialog) and continue —
-            // the hook will be inactive until the user grants access and
-            // relaunches the app.
+            // the polling thread below picks up the grant without a restart.
             let hook_failed = state.install_hook(mapping).is_err();
             if hook_failed {
-                // Trigger the system "Accessibility" permission dialog so the
-                // user lands on the right System Settings pane. The app stays
-                // running; the hook will work after they grant access and relaunch.
                 request_accessibility_permission();
             }
             app.manage(state);
@@ -90,6 +98,11 @@ fn main() {
 
             let shortcut = Shortcut::new(Some(Modifiers::SUPER | Modifiers::ALT), Code::Comma);
             app.global_shortcut().register(shortcut)?;
+
+            // Background watcher: when the user grants Accessibility in System
+            // Settings, retry installing the hook on the main thread. Emits
+            // `hook-status` to the frontend on every state change.
+            spawn_hook_watcher(app.handle().clone(), hook_failed);
 
             // Open settings if the hook couldn't start (typically first run
             // before Accessibility is granted).
@@ -108,6 +121,8 @@ fn main() {
             commands::get_menubar_visible,
             commands::set_menubar_visible,
             commands::open_settings,
+            commands::get_status,
+            commands::request_accessibility,
         ])
         .on_window_event(|window, event| {
             if matches!(event, WindowEvent::CloseRequested { .. }) {
@@ -123,4 +138,63 @@ pub(crate) fn show_settings<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         let _ = window.show();
         let _ = window.set_focus();
     }
+}
+
+fn spawn_hook_watcher(app: AppHandle, hook_initially_failed: bool) {
+    // Emit the initial status so the frontend can render the right banner.
+    let initial_payload = StatusPayload {
+        hook_installed: !hook_initially_failed,
+        accessibility_granted: is_accessibility_trusted(),
+    };
+    let _ = app.emit("hook-status", initial_payload);
+
+    thread::spawn(move || {
+        let mut last_status = (
+            !hook_initially_failed,
+            is_accessibility_trusted(),
+        );
+        loop {
+            thread::sleep(Duration::from_secs(2));
+            let state = app.state::<AppState>();
+            let hook_installed = state.hook_installed();
+            let trusted = is_accessibility_trusted();
+
+            // Try to (re)install the hook on the main thread when Accessibility
+            // becomes available. CGEventTap must be created on a thread that
+            // pumps a CFRunLoop, which is the Tauri/AppKit main thread.
+            if !hook_installed && trusted {
+                let mapping = state.current_mapping();
+                let app_for_main = app.clone();
+                let _ = app.run_on_main_thread(move || {
+                    let state = app_for_main.state::<AppState>();
+                    if let Err(e) = state.install_hook(mapping) {
+                        log::error!("hook re-install failed: {e}");
+                    } else {
+                        log::info!("hook installed after Accessibility was granted");
+                        let payload = StatusPayload {
+                            hook_installed: true,
+                            accessibility_granted: true,
+                        };
+                        let _ = app_for_main.emit("hook-status", payload);
+                    }
+                });
+            }
+
+            let new_status = (state.hook_installed(), trusted);
+            if new_status != last_status {
+                let payload = StatusPayload {
+                    hook_installed: new_status.0,
+                    accessibility_granted: new_status.1,
+                };
+                let _ = app.emit("hook-status", payload);
+                last_status = new_status;
+            }
+        }
+    });
+}
+
+#[derive(Clone, serde::Serialize)]
+struct StatusPayload {
+    hook_installed: bool,
+    accessibility_granted: bool,
 }
