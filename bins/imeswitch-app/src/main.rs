@@ -143,8 +143,19 @@ fn main() {
                 let _ = window.hide();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running imeswitch app");
+        .build(tauri::generate_context!())
+        .expect("error while building imeswitch app")
+        .run(|app, event| {
+            // The app keeps running with LSUIElement + a tray icon after the
+            // settings window is closed. macOS fires Reopen when the user
+            // double-clicks the bundle again or clicks the dock icon (which
+            // we don't have, but Finder/Spotlight launches still go through
+            // here). Without this handler the second launch silently no-ops
+            // and the user thinks the app is broken.
+            if let tauri::RunEvent::Reopen { .. } = event {
+                show_settings(app);
+            }
+        });
 }
 
 pub(crate) fn show_settings<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {

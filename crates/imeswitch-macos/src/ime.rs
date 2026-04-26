@@ -289,19 +289,24 @@ pub fn discover_installed_imes() -> Vec<DetectedIME> {
         if !source.is_enabled || !source.is_selectable {
             continue;
         }
-
-        for language in source
+        // Keyboard layouts like ABC advertise every Latin-script tag they
+        // *can* type (en, af, ca, co, da, de, ...). Only the first tag is
+        // the source's primary language — surfacing the rest creates dozens
+        // of phantom "AF/CA/DE" rows for IMEs the user never installed.
+        let Some(language) = source
             .languages
             .iter()
             .filter_map(|tag| iso_code_from_bcp47(tag))
-        {
-            detected.push(DetectedIME {
-                language,
-                source_id: source.id.clone(),
-                name: source.name.clone(),
-                is_selectable: source.is_selectable,
-            });
-        }
+            .next()
+        else {
+            continue;
+        };
+        detected.push(DetectedIME {
+            language,
+            source_id: source.id,
+            name: source.name,
+            is_selectable: source.is_selectable,
+        });
     }
     detected.sort_by(|a, b| {
         a.language

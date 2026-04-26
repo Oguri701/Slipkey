@@ -108,7 +108,16 @@ pub fn set_tray_visible(app: &AppHandle, state: &AppState, visible: bool) -> Res
     let mut tray = state.tray.lock().unwrap();
     if visible && tray.is_none() {
         let handle = app.clone();
+        // Without an explicit icon, TrayIconBuilder constructs a tray entry
+        // with no glyph — it occupies a slot in the menu bar but renders
+        // nothing visible. Reuse the bundle's default window icon.
+        let icon = app
+            .default_window_icon()
+            .cloned()
+            .ok_or_else(|| "no default window icon configured".to_string())?;
         let built = TrayIconBuilder::new()
+            .icon(icon)
+            .icon_as_template(true)
             .tooltip("Slipkey")
             .on_tray_icon_event(move |_tray, _event| {
                 show_settings(&handle);
