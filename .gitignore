@@ -2,3 +2,5 @@
 **/*.rs.bk
 .DS_Store
 bins/imeswitch-app/gen/
+bins/slipkey-app/.build/
+dist/

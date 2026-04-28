@@ -4,19 +4,95 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-if ! command -v cargo-tauri >/dev/null 2>&1; then
-  echo "cargo-tauri is required. Install it with:"
-  echo "  cargo install tauri-cli --version '^2'"
-  exit 1
-fi
+APP_NAME="Slipkey"
+BUNDLE_ID="dev.zlb.imeswitch"
+VERSION="0.1.0"
+SWIFT_SCRATCH="$ROOT/target/slipkey-swift"
+MODULE_CACHE="$ROOT/target/swift-module-cache"
+BUNDLE_DIR="$ROOT/target/release/bundle/macos"
+APP_PATH="$BUNDLE_DIR/$APP_NAME.app"
+DIST_DIR="$ROOT/dist"
+ZIP_PATH="$DIST_DIR/$APP_NAME-$VERSION-macos-arm64.zip"
 
+echo "==> Testing Rust workspace"
 cargo test --workspace
-cd "$ROOT/bins/imeswitch-app"
-# tauri build ad-hoc signs the .app with identity "-" before bundling it
-# into the DMG and then deletes target/release/bundle/macos/imeswitch.app,
-# so any post-bundle codesign step on that path runs against nothing.
-cargo tauri build --bundles dmg
-cd "$ROOT"
 
-echo "macOS bundle output:"
-find target/release/bundle -maxdepth 3 -name '*.dmg' -print
+# Note: imeswitchd is no longer bundled. The daemon survives only as a
+# standalone CLI for diagnostics — `cargo build --release -p imeswitchd`
+# if you need it. The macOS hook now runs in the Slipkey app's main
+# process, so a single Accessibility grant covers everything.
+
+echo "==> Testing Swift package"
+swift test \
+  --package-path "$ROOT/bins/slipkey-app" \
+  --scratch-path "$SWIFT_SCRATCH"
+
+echo "==> Building native app shell"
+mkdir -p "$MODULE_CACHE"
+CLANG_MODULE_CACHE_PATH="$MODULE_CACHE" \
+  swift build \
+    -c release \
+    --package-path "$ROOT/bins/slipkey-app" \
+    --scratch-path "$SWIFT_SCRATCH"
+
+echo "==> Assembling $APP_NAME.app"
+rm -rf "$APP_PATH"
+mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" "$DIST_DIR"
+
+cp "$ROOT/bins/slipkey-app/Info.plist" "$APP_PATH/Contents/Info.plist"
+cp "$SWIFT_SCRATCH/release/$APP_NAME" "$APP_PATH/Contents/MacOS/$APP_NAME"
+cp "$ROOT/bins/imeswitch-app/icons/icon.icns" "$APP_PATH/Contents/Resources/icon.icns"
+
+chmod +x "$APP_PATH/Contents/MacOS/$APP_NAME"
+xattr -cr "$APP_PATH" || true
+xattr -c "$APP_PATH" || true
+xattr -d com.apple.FinderInfo "$APP_PATH" 2>/dev/null || true
+/usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $APP_NAME" "$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP_PATH/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP_PATH/Contents/Info.plist"
+xattr -cr "$APP_PATH" || true
+xattr -c "$APP_PATH" || true
+xattr -d com.apple.FinderInfo "$APP_PATH" 2>/dev/null || true
+rm -rf "$APP_PATH/Contents/_CodeSignature"
+
+echo "==> Ad-hoc signing"
+# No nested binaries to deep-sign — Resources/ holds only an icon.
+codesign --force --sign - "$APP_PATH"
+codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+
+echo "==> Creating zip"
+rm -f "$ZIP_PATH"
+ditto -c -k --keepParent --noextattr --noqtn --norsrc "$APP_PATH" "$ZIP_PATH"
+xattr -c "$ZIP_PATH" || true
+
+# `target/release/bundle/macos/` lives in the project tree, which is usually
+# under iCloud Drive's "Desktop & Documents" sync. iCloud's fileprovider
+# continually re-adds com.apple.FinderInfo + com.apple.fileprovider.fpfs#P
+# xattrs to anything inside, which makes `codesign --strict` fail and TCC
+# silently reject the Accessibility grant for `open`-launched processes.
+# So we deploy the final bundle to /Applications/ (outside iCloud) and re-sign
+# there. /Applications is admin-writable on a default macOS install — this
+# step does NOT require sudo for an admin user.
+INSTALL_PATH="/Applications/$APP_NAME.app"
+echo "==> Installing to $INSTALL_PATH"
+pkill -x "$APP_NAME" 2>/dev/null || true
+sleep 1
+rm -rf "$INSTALL_PATH"
+ditto --noextattr --noqtn --norsrc "$APP_PATH" "$INSTALL_PATH"
+xattr -cr "$INSTALL_PATH"
+codesign --force --sign - "$INSTALL_PATH"
+codesign --verify --deep --strict --verbose=2 "$INSTALL_PATH" || \
+  echo "  (warn: --deep --strict failed at $INSTALL_PATH — TCC may need re-grant)"
+
+echo ""
+echo "macOS build output:"
+echo "  $APP_PATH       (build artifact, NOT for direct use — iCloud xattrs)"
+echo "  $ZIP_PATH       (distributable)"
+echo "  $INSTALL_PATH   (live install, run from here)"
+echo ""
+echo "If you'd previously granted Accessibility, the binary hash just changed"
+echo "and TCC may silently deny. To re-grant after rebuild:"
+echo "  tccutil reset Accessibility $BUNDLE_ID"
+echo "  open $INSTALL_PATH"
+echo "  # then toggle Slipkey on in System Settings → Privacy & Security → Accessibility"
