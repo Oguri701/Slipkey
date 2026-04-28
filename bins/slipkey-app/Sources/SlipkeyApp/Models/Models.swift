@@ -30,6 +30,44 @@ struct SlipkeyConfig: Hashable {
         )
     }
 
+    func validationErrors() -> [String] {
+        var errors: [String] = []
+        let rows = mappings
+            .map { ($0.language, $0.prefix.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) }
+            .filter { !$0.1.isEmpty }
+
+        for (_, prefix) in rows {
+            if prefix.contains(where: { character in
+                if case .alphaNum = HookKey.from(character: character) {
+                    return false
+                }
+                return true
+            }) {
+                errors.append("Prefixes can only contain letters and numbers.")
+            }
+        }
+
+        var seen: [String: String] = [:]
+        for (language, prefix) in rows {
+            if seen[prefix] != nil {
+                errors.append("Prefixes must be unique.")
+            } else {
+                seen[prefix] = language
+            }
+        }
+
+        for (index, row) in rows.enumerated() {
+            for other in rows.dropFirst(index + 1) {
+                if row.1 != other.1 && (row.1.hasPrefix(other.1) || other.1.hasPrefix(row.1)) {
+                    errors.append("Prefixes cannot start with another configured prefix.")
+                    return errors
+                }
+            }
+        }
+
+        return errors
+    }
+
     func mergingDetectedSources(_ sources: [InputSource]) -> SlipkeyConfig {
         let languages = Array(Set(sources.filter(\.isSelectable).map(\.language))).sorted()
         guard !languages.isEmpty else { return self }

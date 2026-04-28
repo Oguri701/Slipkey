@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-private let kGitHubURL = URL(string: "https://github.com/Oguri701/imeswitch")!
+private let kGitHubURL = URL(string: "https://github.com/Oguri701/Slipkey")!
 
 private struct ContentHeightKey: PreferenceKey {
     static let defaultValue: CGFloat = 0
@@ -211,6 +211,8 @@ struct ShortcutTable: View {
             .padding(.horizontal, hPad)
             .padding(.bottom, 4)
 
+            Divider().padding(.leading, hPad)
+
             ForEach($appState.config.mappings) { $mapping in
                 HStack(spacing: 0) {
                     Text(languageName(mapping.language))
@@ -222,18 +224,11 @@ struct ShortcutTable: View {
                         .controlSize(.small)
                         .frame(width: prefW)
                     Spacer().frame(width: gap)
-                    Picker("", selection: $mapping.source) {
-                        ForEach(appState.detectedSources.filter { $0.language == mapping.language }) { source in
-                            Text(source.name).tag(source.sourceID)
-                        }
-                        if !appState.detectedSources.contains(where: { $0.sourceID == mapping.source }) {
-                            Text(mapping.source).tag(mapping.source)
-                        }
-                    }
-                    .labelsHidden()
-                    .controlSize(.small)
-                    .frame(width: sourceW, alignment: .leading)
-                    .clipped()
+                    SourceMenu(
+                        mapping: $mapping,
+                        sources: appState.detectedSources.filter { $0.language == mapping.language },
+                        width: sourceW
+                    )
                 }
                 .padding(.horizontal, hPad)
                 .padding(.vertical, 3)
@@ -257,6 +252,61 @@ struct ShortcutTable: View {
         case "zh": "中文"
         case "ja": "日本語"
         default: code.uppercased()
+        }
+    }
+}
+
+struct SourceMenu: View {
+    @Binding var mapping: MappingEntry
+    let sources: [InputSource]
+    let width: CGFloat
+
+    var body: some View {
+        Menu {
+            ForEach(sources) { source in
+                Button {
+                    mapping.source = source.sourceID
+                } label: {
+                    menuItemLabel(source.name, isSelected: source.sourceID == mapping.source)
+                }
+            }
+            if !sources.contains(where: { $0.sourceID == mapping.source }) {
+                Button {} label: {
+                    menuItemLabel(mapping.source, isSelected: true)
+                }
+                .disabled(true)
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Text(selectedSourceName)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 0)
+                Image(systemName: "chevron.up.chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.secondary)
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(.primary)
+            .padding(.horizontal, 8)
+            .frame(width: width, height: 22, alignment: .leading)
+            .background(Color(nsColor: .controlColor), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Input source")
+        .accessibilityValue(selectedSourceName)
+    }
+
+    private var selectedSourceName: String {
+        sources.first { $0.sourceID == mapping.source }?.name ?? mapping.source
+    }
+
+    @ViewBuilder
+    private func menuItemLabel(_ title: String, isSelected: Bool) -> some View {
+        if isSelected {
+            Label(title, systemImage: "checkmark")
+        } else {
+            Text(title)
         }
     }
 }

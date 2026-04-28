@@ -55,6 +55,11 @@ final class AppState: ObservableObject {
     }
 
     func saveAndRestart() {
+        let errors = config.validationErrors()
+        guard errors.isEmpty else {
+            statusMessage = L10n.text(errors[0], uiLanguage)
+            return
+        }
         do {
             try ConfigStore.save(config)
             hook.restart(with: config)

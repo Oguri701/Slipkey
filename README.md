@@ -127,7 +127,7 @@ bins/
       App/              AppDelegate, AppState, WindowManager, StatusItemManager
       Views/            SwiftUI settings UI
       Stores/           Config persistence, L10n, UserDefaults
-    Tests/              27 unit tests (state machine, keycode, composition)
+    Tests/              unit tests (state machine, keycode, composition, config validation)
   slipkey-windows/      Windows native app (Rust, egui)
     src/
       hook_thread.rs    WH_KEYBOARD_LL + PeekMessageW loop

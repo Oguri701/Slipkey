@@ -24,6 +24,6 @@ pub fn show(ui: &mut egui::Ui, icon: Option<&egui::TextureHandle>) {
     ui.separator();
     ui.add_space(8.0);
     if ui.button("View on GitHub").clicked() {
-        let _ = open::that("https://github.com/Oguri701/imeswitch");
+        let _ = open::that("https://github.com/Oguri701/Slipkey");
     }
 }
