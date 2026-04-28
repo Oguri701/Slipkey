@@ -327,7 +327,7 @@ struct AboutSettingsView: View {
                     Text(L10n.text("Switch input methods by typing.", appState.uiLanguage))
                         .font(.system(size: 11, weight: .light))
                         .foregroundStyle(.primary)
-                    Text("v\(appVersion())  ·  © 2026 zlb")
+                    Text("v\(appVersion())  ·  © 2026 oguri701")
                         .font(.system(size: 9))
                         .foregroundStyle(Color(nsColor: .disabledControlTextColor))
                         .padding(.top, 2)

@@ -14,7 +14,7 @@ pub fn show(ui: &mut egui::Ui, icon: Option<&egui::TextureHandle>) {
             ui.add_space(4.0);
             let version = env!("CARGO_PKG_VERSION");
             ui.label(
-                egui::RichText::new(format!("v{version}  (c) 2026 zlb"))
+                egui::RichText::new(format!("v{version}  (c) 2026 oguri701"))
                     .small()
                     .weak(),
             );
