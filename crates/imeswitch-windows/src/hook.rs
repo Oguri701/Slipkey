@@ -1,6 +1,6 @@
 //! Windows low-level keyboard hook that feeds keydowns into `imeswitch-core`.
 
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use imeswitch_core::{Key, Language, StateMachine};
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
@@ -14,10 +14,11 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
     KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
 };
 
-use crate::composition::is_composing;
-use crate::keymap::{key_to_vk_with_leader, vk_to_key_with_leader, VK_SEMICOLON};
+use crate::composition::{is_cjk_ime_active, is_composing};
+use crate::ime::{ImeSwitcher, Mapping};
+use crate::keymap::{key_to_vk_with_leader, leader_vk_for, vk_to_key_with_leader, VK_SEMICOLON};
 
-const REPLAY_MAGIC: usize = 0x696d_6573_7769_6e36; // "imeswin6"
+const REPLAY_MAGIC: usize = 0x696d_6573_7769_6e36;
 
 static HOOK_STATE: OnceLock<Mutex<HookState>> = OnceLock::new();
 
@@ -30,12 +31,12 @@ pub enum HookError {
 
 impl std::fmt::Display for HookError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let message = match self {
+        let msg = match self {
             HookError::AlreadyInstalled => "keyboard hook already installed",
             HookError::StateUnavailable => "keyboard hook state unavailable",
             HookError::InstallFailed => "SetWindowsHookExW(WH_KEYBOARD_LL) failed",
         };
-        f.write_str(message)
+        f.write_str(msg)
     }
 }
 
@@ -43,7 +44,10 @@ impl std::error::Error for HookError {}
 
 struct HookState {
     sm: StateMachine,
-    on_switch: Box<dyn FnMut(Language) + Send + 'static>,
+    /// Shared with the hook thread so config can be swapped without
+    /// uninstalling the Win32 hook. Lock order: always HOOK_STATE first,
+    /// then switcher, never hold both simultaneously (see handle_keydown).
+    switcher: Arc<Mutex<ImeSwitcher>>,
     possible_composition: bool,
     leader_vk: u32,
 }
@@ -53,37 +57,20 @@ pub struct EventHook {
 }
 
 impl EventHook {
-    pub fn install<F>(on_switch: F) -> Result<Self, HookError>
-    where
-        F: FnMut(Language) + Send + 'static,
-    {
-        Self::install_with_state(StateMachine::new(), VK_SEMICOLON, on_switch)
-    }
-
-    pub fn install_with_mappings<F, I>(
+    /// Install the hook. `switcher` is shared with the caller so
+    /// `update_config` can swap the mapping without reinstalling.
+    pub fn install_with_mappings<I>(
         leader_vk: u32,
         mappings: I,
-        on_switch: F,
+        switcher: Arc<Mutex<ImeSwitcher>>,
     ) -> Result<Self, HookError>
     where
-        F: FnMut(Language) + Send + 'static,
         I: IntoIterator<Item = (Language, String)>,
-    {
-        Self::install_with_state(StateMachine::from_mappings(mappings), leader_vk, on_switch)
-    }
-
-    fn install_with_state<F>(
-        state_machine: StateMachine,
-        leader_vk: u32,
-        on_switch: F,
-    ) -> Result<Self, HookError>
-    where
-        F: FnMut(Language) + Send + 'static,
     {
         HOOK_STATE
             .set(Mutex::new(HookState {
-                sm: state_machine,
-                on_switch: Box::new(on_switch),
+                sm: StateMachine::from_mappings(mappings),
+                switcher,
                 possible_composition: false,
                 leader_vk,
             }))
@@ -100,8 +87,18 @@ impl EventHook {
         if hook.is_null() {
             return Err(HookError::InstallFailed);
         }
-
         Ok(Self { hook })
+    }
+
+    /// Update the state machine and leader key without reinstalling the hook.
+    /// Call this after the shared `Arc<Mutex<ImeSwitcher>>` has already been
+    /// updated with the new mapping.
+    pub fn update_config(&self, mapping: &Mapping) {
+        if let Some(state) = HOOK_STATE.get() {
+            let mut guard = state.lock().unwrap();
+            guard.sm = StateMachine::from_mappings(mapping.trigger_mappings());
+            guard.leader_vk = leader_vk_for(mapping.leader()).unwrap_or(VK_SEMICOLON);
+        }
     }
 }
 
@@ -153,7 +150,10 @@ fn handle_keydown(vk: u32) -> Result<bool, HookError> {
     let composing = is_composing();
     let has_mod = has_blocking_modifier();
 
-    let (response, leader_vk) = {
+    // Clone the Arc while holding the HOOK_STATE lock, then release the lock
+    // before calling switch_to. This prevents deadlock when update_config
+    // locks switcher first and then HOOK_STATE.
+    let (response, leader_vk, switcher_arc) = {
         let mut guard = state.lock().unwrap();
         let leader_vk = guard.leader_vk;
         let should_defer = guard.sm.is_idle()
@@ -181,6 +181,7 @@ fn handle_keydown(vk: u32) -> Result<bool, HookError> {
         };
         let response = guard.sm.on_keydown(key);
         update_possible_composition(&mut guard, composing, vk, response.switch.is_some());
+
         log::debug!(
             "  -> key={:?} suppress={} replay={:?} switch={:?}",
             key,
@@ -188,12 +189,15 @@ fn handle_keydown(vk: u32) -> Result<bool, HookError> {
             response.replay,
             response.switch,
         );
-        (response, leader_vk)
+
+        let switcher_arc = guard.switcher.clone();
+        (response, leader_vk, switcher_arc)
     };
 
-    if let Some(lang) = response.switch.clone() {
-        let mut guard = state.lock().unwrap();
-        (guard.on_switch)(lang);
+    if let Some(ref lang) = response.switch {
+        if let Err(error) = switcher_arc.lock().unwrap().switch_to(lang) {
+            log::error!("switch failed: {}", error);
+        }
     }
 
     for key in &response.replay {
@@ -228,11 +232,17 @@ fn update_possible_composition(state: &mut HookState, composing: bool, vk: u32, 
         state.possible_composition = false;
     } else if composing || vk_to_key_with_leader(vk, state.leader_vk) == Key::Other {
         state.possible_composition = true;
+    } else if is_cjk_ime_active()
+        && matches!(vk_to_key_with_leader(vk, state.leader_vk), Key::AlphaNum(_))
+    {
+        // TSF-based IMEs (Microsoft Pinyin/Japanese) don't report via IMM32.
+        // Treat alphanum presses while a CJK layout is active as potential
+        // composition input, mirroring the macOS idle fallback.
+        state.possible_composition = true;
     }
 }
 
-fn is_composition_ending_key(vk: u32, leader_vk: u32) -> bool {
-    let _ = leader_vk;
+fn is_composition_ending_key(vk: u32, _leader_vk: u32) -> bool {
     matches!(
         vk,
         x if x == VK_SPACE as u32
