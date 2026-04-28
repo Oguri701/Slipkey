@@ -211,6 +211,23 @@ pub fn load_or_default() -> (Mapping, LoadOutcome) {
     (mapping, outcome)
 }
 
+/// Saves `config` to the default path (`%APPDATA%\imeswitch\config.toml`).
+pub fn save(config: &Config) -> anyhow::Result<()> {
+    save_to(config, &default_path())
+}
+
+/// Saves `config` to an explicit path (used in tests and the settings window).
+pub fn save_to(config: &Config, path: &std::path::Path) -> anyhow::Result<()> {
+    use anyhow::Context as _;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).context("create config dir")?;
+    }
+    let toml = toml::to_string_pretty(config).context("serialize config")?;
+    std::fs::write(path, toml).context("write config")?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -260,5 +277,20 @@ source = "0000040C"
     fn template_round_trips() {
         let parsed = toml::from_str::<Config>(&Config::template_toml()).unwrap();
         assert_eq!(parsed.into_mapping(), Mapping::default());
+    }
+
+    #[test]
+    fn save_to_and_reload_round_trips() {
+        let tmp = std::env::temp_dir().join("imeswitch-test-save-round-trip.toml");
+        let mapping = Mapping::default();
+        let config = Config::from_mapping(&mapping);
+        save_to(&config, &tmp).expect("save_to failed");
+        match load_from(&tmp) {
+            LoadOutcome::Loaded { config: loaded, .. } => {
+                assert_eq!(loaded.into_mapping(), mapping);
+            }
+            other => panic!("expected Loaded, got {:?}", other),
+        }
+        std::fs::remove_file(&tmp).ok();
     }
 }
