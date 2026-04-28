@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/imeswitch-core",
     "crates/imeswitch-windows",
-    "bins/imeswitchd",
+    "bins/slipkey-windows",
 ]
 
 [workspace.package]
