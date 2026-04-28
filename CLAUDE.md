@@ -4,147 +4,122 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A keyboard daemon: user types `;en` / `;ja` / `;zh` (ISO-639-1 codes) in any text field, the OS input source switches and the prefix is swallowed. The point is that the same trigger works across Mac and Windows so the user doesn't have to remember platform-specific IME shortcuts. macOS is implemented (M0-M2 + guards); Windows M1 has a first win64 implementation and compiles for `x86_64-pc-windows-msvc`, but still needs runtime testing on a real Windows machine.
+A keyboard tool: user types `;en` / `;ja` / `;zh` (ISO-639-1 codes) in any text field, the OS input source switches and the prefix is swallowed. Same trigger across Mac and Windows so the user doesn't have to remember platform-specific IME shortcuts.
+
+- **macOS** runs in **Slipkey.app** — a SwiftPM AppKit/SwiftUI app with status-bar icon, settings UI, and the event hook in the **main process**. Single binary, single Accessibility grant, no daemon child process. The architecture mirrors Mos.
+- **Windows** still uses the Rust **imeswitchd** daemon. Compiles for `x86_64-pc-windows-msvc`; runtime tested on a real Windows box is still pending.
 
 ## Commands
 
 ```bash
-# workspace build / test
-cargo build --release
-cargo test --workspace
+# Slipkey (macOS app) — Swift
+swift test --package-path bins/slipkey-app --scratch-path target/slipkey-swift
+swift build -c release --package-path bins/slipkey-app --scratch-path target/slipkey-swift
+bash scripts/package-macos.sh                       # full bundle + zip pipeline
+
+# Rust workspace (Windows daemon + shared core)
+cargo test --workspace                              # state-machine tests + windows tests
 cargo check -p imeswitchd --target x86_64-pc-windows-msvc
 
-# run core-only tests (platform-independent state machine)
-cargo test -p imeswitch-core
-
-# run one test by name
+# Run one core test by name
 cargo test -p imeswitch-core full_trigger_ja
-
-# daemon
-./target/release/imeswitchd           # run
-./target/release/imeswitchd list      # dump all TIS input sources / Windows HKLs
-./target/release/imeswitchd init      # write a config.toml template
-RUST_LOG=debug ./target/release/imeswitchd   # full per-keydown trace
 ```
 
-When iterating on the daemon, **always kill the running one first**:
+When iterating on Slipkey, **always kill the running one first**:
 
 ```bash
-pkill -x imeswitchd
+pkill -x Slipkey
 ```
-
-A stale daemon is the most common source of "my fix isn't working" false alarms — macOS permissions are per-binary-hash, but if the old process is still live it keeps handling events and your new build never runs.
 
 ## Architecture
 
 ### Why a keycode-level hook, not a text watcher
 
-The non-obvious core insight: any approach that reads typed *characters* is dead on arrival. In Chinese/Japanese IMEs, `;en` becomes `；えん` / composition-buffer content before anyone at the application level sees it. The hook MUST run at the HID keycode layer (`CGEventTap(HIDEventTap)` on macOS, `WH_KEYBOARD_LL` on Windows), recognize the sequence by *virtual keycodes*, and consume those keycodes before the IME converts them. Everything in this repo is shaped by that constraint.
+The non-obvious core insight: any approach that reads typed *characters* is dead on arrival. In Chinese/Japanese IMEs, `;en` becomes `；えん` / composition-buffer content before anyone at the application level sees it. The hook MUST run at the HID keycode layer (`CGEventTap(HIDEventTap)` on macOS, `WH_KEYBOARD_LL` on Windows), recognize the sequence by *virtual keycodes*, and consume those keycodes before the IME converts them.
 
-### Crate layout
+### Layout
 
-- `crates/imeswitch-core`: platform-agnostic state machine (`StateMachine`, `Key`, `Language`, `Response`). Pure Rust, no I/O, no syscalls. This is what M1 Windows reuses unchanged.
-- `crates/imeswitch-macos`: macOS implementation. Depends on `imeswitch-core` + `core-graphics`, `core-foundation`, Carbon (TIS) FFI.
-- `crates/imeswitch-windows`: Windows implementation. Depends on `imeswitch-core` + `windows-sys`, using `WH_KEYBOARD_LL`, `SendInput`, IMM32 composition checks, and HKL switching.
-- `bins/imeswitchd`: glue binary (`main.rs` only). Subcommand dispatch (`run` / `list` / `init`), config load, wires the platform hook to a platform switcher.
+- `bins/slipkey-app/` — macOS native app (Swift). All macOS-specific logic lives here, ported from the deleted `crates/imeswitch-macos/` Rust crate.
+  - `Sources/SlipkeyApp/Hook/` — `HookKey`, `Keycode`, `StateMachine`, `IMEManager` (Carbon TIS), `Composition` (AX), `EventHook` (CGEventTap)
+  - `Sources/SlipkeyApp/Services/` — `HookService`, `AccessibilityService`, `InputSourceService` (uses `IMEManager.listAll`), `LoginItemService`
+  - `Sources/SlipkeyApp/App/` — `AppDelegate`, `AppState`, `StatusItemManager`, `WindowManager`
+  - `Sources/SlipkeyApp/Views/SettingsView.swift` — SwiftUI settings
+  - `Tests/SlipkeyAppTests/` — 27 tests covering `HookKey`, `Keycode`, `StateMachine` (13 ports of the original Rust tests), and `Composition.shouldDefer`
+- `crates/imeswitch-core/` — Pure-Rust state machine. Used by the Windows daemon. The macOS Slipkey app has its own (Swift) port of the same algorithm; the two ports are kept in sync semantically.
+- `crates/imeswitch-windows/` — Windows daemon implementation. Depends on `imeswitch-core` + `windows-sys`.
+- `bins/imeswitchd/` — Windows-only daemon binary. macOS no longer uses this binary at all; on macOS the CLI prints "use the Slipkey app" and exits.
 
-### State machine contract (`imeswitch-core`)
+### State machine contract (mirrored on both sides)
 
-A pure function `on_keydown(Key) -> Response` where `Response` has three independent fields:
+A pure function `onKeydown(HookKey) -> StateMachineResponse` (Swift) / `on_keydown(Key) -> Response` (Rust) where the response has three independent fields:
 
-- `suppress: bool` — whether the platform hook should drop the current event
-- `replay: Vec<Key>` — previously-suppressed keys the hook must synth-post BEFORE letting the current event through (used on sequence cancellation — e.g. `;ex` must show `;ex`, not just `x`)
-- `switch: Option<Language>` — if set, hook fires the user's `on_switch` callback
+- `suppress: Bool` — whether the platform hook should drop the current event
+- `replay: [HookKey]` — previously-suppressed keys the hook must synth-post BEFORE the current event flows through (used on cancellation — e.g. `;ex` must show `;ex`, not just `x`)
+- `switchTo: String?` / `switch: Option<Language>` — if set, hook fires the user's switch callback
 
-The machine is stateful across calls (tracks leader / AfterE / AfterJ / AfterZ). `is_idle()` exposes whether a trigger is in flight — **mid-sequence trumps every other guard** (modifier filter, composition defer) because silently abandoning a partially-grabbed sequence eats user keystrokes without visible output.
+The machine is stateful across calls (trie current-node + buffer). `isIdle` exposes whether a trigger is in flight — **mid-sequence trumps every other guard** (modifier filter, composition defer) because silently abandoning a partially-grabbed sequence eats user keystrokes without visible output.
 
-### macOS specifics
+### macOS specifics (in Slipkey, not Rust)
 
-- **Suppression only works on `core-graphics >= 0.25`**. The 0.24 `CGEventTap` binding has a silent bug: returning `None` from the callback falls back to the original event pointer, so events you "dropped" still flow through. 0.25 uses `CallbackResult::{Keep, Drop, Replace}`. Do not downgrade this dep.
-- **Replay is posted at `CGEventTapLocation::Session`, not HID.** Posting at HID re-enters our own tap and loops. Session is below our tap so the events go to IME/app but don't bounce back.
+- **CGEventTap location: HID, replay at Session.** Posting replay at HID re-enters our own tap and loops; Session is below our tap so events go to IME/app but don't bounce back. See `EventHook.synthPost`.
+- **Tap is created with `CGEvent.tapCreate(tap: .cghidEventTap, options: .defaultTap, ...)`.** On modern macOS, `tapCreate` returns non-nil even WITHOUT Accessibility — it just silently never delivers events. The hook installation log saying "installed" therefore does NOT prove events flow; only granted Accessibility does.
+- **Disabled-tap re-enable.** Callback handles `.tapDisabledByTimeout` / `.tapDisabledByUserInput` by re-enabling the tap, otherwise macOS would freeze the hook after a long-running callback or after a focus-stealing input event.
 - **Keycodes are US-QWERTY (`kVK_ANSI_*`).** Non-QWERTY users (Dvorak etc.) will get wrong triggers. Not addressed.
-- **TIS IDs are per-user.** `Mapping::default()` targets `com.apple.keylayout.ABC` / `com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese` / `com.apple.inputmethod.SCIM.Shuangpin`. Users on 全拼 / Rime / 搜狗 / ATOK override via `~/.config/imeswitch/config.toml`. `imeswitchd list` is the canonical source of truth for what IDs actually exist on a given machine.
+- **TIS IDs are per-user.** `SlipkeyConfig.defaults` targets `com.apple.keylayout.ABC` / `com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese` / `com.apple.inputmethod.SCIM.Shuangpin`. Users on 全拼 / Rime / 搜狗 / ATOK override via `~/.config/imeswitch/config.toml` or via the Settings UI.
 - **Switching uses `TISSelectInputSource` on the input-mode ID directly** (e.g. `SCIM.Shuangpin`, not the parent `SCIM`). The parent IMs show `IsSelectCapable=false` and TIS won't accept them.
 
 ### Two guards in the hook (both pre-state-machine)
 
-1. **Modifier mask** (`has_blocking_modifier`): Shift/Ctrl/Option/Cmd held → treat the event as `Key::Other`. Otherwise `Shift+;` (`:`) would start a trigger, making `:en` in code or `:ja` in tests a phantom switch. CapsLock and Fn are intentionally *not* in the mask.
+1. **Modifier mask** (`EventHook.eventKey`): Shift/Ctrl/Option/Cmd held → treat the event as `.other`. Otherwise `Shift+;` (`:`) would start a trigger, making `:en` in code or `:ja` in tests a phantom switch. CapsLock and Fn are intentionally *not* in the mask.
 
-2. **Composition heuristic**: if the current input source is an IME (any `TISType*` except `TISTypeKeyboardLayout`) AND the last keydown was within 500ms AND the state machine is idle, the hook returns `Keep` without feeding the event to the state machine. Goal: don't steal `;` mid-Chinese-pinyin. The 500ms threshold is a pragmatic guess — it's wrong if the user pauses mid-composition for longer, but AX `AXMarkedTextRange` polling on every keydown was judged too costly for M0/M2.
+2. **Composition heuristic** (`Composition.swift`): if the active input source is an IME (any TIS type other than `TISTypeKeyboardLayout`), ask Accessibility for `AXMarkedTextRange` on the focused element. Length>0 → `.active`, ==0 → `.inactive`, missing/non-AXValue → fall through to `AXTextInputMarkedTextMarkerRange` (web views). When AX cannot answer, fall back to a 500ms idle-window heuristic (`Composition.idleThreshold`) so we still avoid eating `;` mid-Chinese-pinyin in opaque controls. The Rust code's candidate-window scan was intentionally NOT ported — AX covers the common case and that scan is expensive.
 
-### The `dispatch` module
+### Windows specifics (in Rust)
 
-`crates/imeswitch-macos/src/dispatch.rs` contains a minimal libdispatch FFI (`async_main`). **Currently unused but wired into `lib.rs`.** It exists for an experiment: moving the `TISSelectInputSource` call out of the CGEventTap callback onto the next main-runloop tick so `kTISNotifySelectedKeyboardInputSourceChanged` has time to propagate before the next keystroke. The switching-visually-works-but-typing-stays-Latin bug (see below) may or may not be a timing race; if you take that experiment on, the Arc-refactor needed to share the on_switch closure across the defer is the main work.
+Unchanged from the pre-Slipkey design:
+- Win64 only (`x86_64-pc-windows-msvc`).
+- Hook via `SetWindowsHookExW(WH_KEYBOARD_LL)`; consume by returning 1, pass via `CallNextHookEx`.
+- Modifier guard mirrors macOS (Shift/Ctrl/Alt/Win).
+- Replay via `SendInput`, marked with a `dwExtraInfo` magic so re-entry skips the hook.
+- Composition detection via IMM32 (`ImmGetContext` + `ImmGetCompositionStringW(GCS_COMPSTR)` on focused HWND) — exact, not a time heuristic.
+- HKL switching defaults: `00000409` (US), `00000411` (JP), `00000804` (CN Simplified). Override via `%APPDATA%\imeswitch\config.toml`.
+- Daemon must run un-elevated (UIPI).
+- Some UWP/sandbox apps don't see low-level hook output — document as unsupported.
 
-## Known open issues
+## Operational gotchas (macOS)
 
-### Intermittent "switch succeeded visually but typing stays Latin"
+These bit us during the Slipkey port and will bite anyone iterating on the app, so memorize them:
 
-User reports: after `;zh` or `;ja` the menu-bar IME indicator changes correctly, but subsequent keystrokes in the focused text field produce Latin letters instead of composed Chinese/Japanese. **Sometimes deterministic per-window** (one of ZH or JA is "stuck" for the lifetime of a window, refreshing the window may flip which one), sometimes timing-dependent.
+### TCC permissions and ad-hoc signing
 
-Diagnostic already added: `main.rs` logs `switch {Lang}: {before_id} -> {after_id}` using `TISCopyCurrentKeyboardInputSource` before and after each switch. `RUST_LOG=debug` also prints per-keydown state machine decisions. Next session: have the user reproduce + capture the log, check whether `after_id` matches the requested ID. If yes, the race is downstream of TIS (focused app's NSTextInputContext cache); try the dispatch_async path. If no, TIS isn't actually selecting what we asked for.
+macOS TCC binds the Accessibility grant to the binary's CDHash. **Every Slipkey rebuild changes the CDHash and silently invalidates the grant** — the toggle in System Settings stays "on" but the new binary doesn't actually receive events. Symptom: triggers stop working but `hook installed` still appears in the diag log.
 
-## Work plan
+The dev workflow when iterating on Swift code:
+1. `pkill -x Slipkey`
+2. `swift build -c release --package-path bins/slipkey-app …`
+3. Replace the binary inside the deployed `.app`; `xattr -cr` and `codesign --force --sign - <app>`
+4. `tccutil reset Accessibility dev.zlb.imeswitch`
+5. `open <app>`
+6. Re-grant Accessibility in System Settings (remove any stale entry, `+` the new bundle path, toggle on)
+7. macOS may not actually relaunch on toggle — `pkill -x Slipkey && open <app>` to be sure
 
-### Done
+For an end-user shipped via the dist .zip, this is a one-time cost. For development, every rebuild costs you a full re-grant.
 
-- **M0** — macOS PoC: CGEventTap hook, state machine, TIS switcher, `;en`/`;ja`/`;zh` triggers.
-- **M2** — TOML config at `~/.config/imeswitch/config.toml` (XDG_CONFIG_HOME honoured); `list` and `init` subcommands; malformed file → warn + defaults.
-- **Quality fixes** — modifier-guard, composition heuristic, full debug logging of keydown decisions.
+### iCloud-synced paths break `codesign --verify --strict`
 
-### Deferred (not doing for now per user)
+`~/Desktop` and `~/Documents` are inside iCloud Drive's "Desktop & Documents" sync (when enabled, default on most macs). When a `.app` lives there, iCloud's fileprovider continually adds `com.apple.FinderInfo` and `com.apple.fileprovider.fpfs#P` xattrs to the bundle root, and `codesign --verify --deep --strict` then fails ("Disallowed xattr ... found"). Whether TCC actually rejects an iCloud-tagged bundle is unclear — when triggers stopped working during the port, the more reliable explanation turned out to be the rebuild-invalidation issue above (stale CDHash, not the xattrs).
 
-- **M3 Tray icon** — skipped, macOS already shows the input source in the menu bar.
+Either way, don't run from `target/release/bundle/macos/Slipkey.app` directly. The package script (`scripts/package-macos.sh`) handles this: it builds in `target/...`, then `ditto`s a clean copy to `/Applications/Slipkey.app`, strips xattrs there, and re-signs. `/Applications` is admin-writable on a default macOS install, so no sudo is needed for an admin user. Run from `/Applications/Slipkey.app` for daily use; `target/...` is just an intermediate build artifact.
 
-### Windows specifics
+### NSLog from a GUI-launched Slipkey is invisible to `log show`
 
-- **Win64 only.** The supported target is `x86_64-pc-windows-msvc`; do not spend engineering time on 32-bit Windows unless a real user appears with that need.
-- **Hooking uses `SetWindowsHookExW(WH_KEYBOARD_LL)`.** The hook consumes trigger keys by returning non-zero and passes other keys through with `CallNextHookEx`.
-- **Modifier guard mirrors macOS.** Shift/Ctrl/Alt/Win held means the event becomes `Key::Other`, so `Shift+;` (`:`) does not start a trigger.
-- **Replay uses `SendInput` with a `dwExtraInfo` magic marker.** Replayed cancellation keys skip the hook when they re-enter.
-- **Composition detection uses IMM32.** `ImmGetContext` + `ImmGetCompositionStringW(GCS_COMPSTR)` on the focused HWND is used instead of the macOS time heuristic.
-- **Switching uses HKL IDs.** Defaults are `00000409` (US English), `00000411` (Japanese), `00000804` (Chinese Simplified, PRC). Users can override these in `%APPDATA%\imeswitch\config.toml`.
-- **Run un-elevated.** An elevated daemon cannot reliably send input to non-elevated apps because of UIPI.
+macOS's privacy-by-default policy filters NSLog output from GUI-launched apps in unified logging. To see Slipkey's runtime logs:
+- Launch from terminal: `/Applications/Slipkey.app/Contents/MacOS/Slipkey 2>&1 | tee /tmp/slipkey.log`
+- Or write to a file from inside the app (the `AppDelegate.diag` helper writes to `/tmp/slipkey-diag.log` on launch — currently in tree as a debug aid; remove when you're sure of the runtime path)
 
-### M1 — Windows parity
+## File pointers
 
-Status: first implementation is in place and cross-checks with `cargo check -p imeswitchd --target x86_64-pc-windows-msvc`. It still needs functional testing on Windows for real hook behavior, IME switching, composition detection, and app compatibility.
-
-Scope: reach functional parity with the current macOS build on Windows, sharing `imeswitch-core` unchanged.
-
-New crate `crates/imeswitch-windows/` mirroring `imeswitch-macos/`:
-
-- `keymap.rs` — `VK_OEM_1` (`;`=0xBA), `VK_A`=0x41 … `VK_Z`=0x5A. Same shape as macOS keymap, different constants.
-- `hook.rs` — `SetWindowsHookExW(WH_KEYBOARD_LL, …)`. In the callback:
-  - Use `KBDLLHOOKSTRUCT::vkCode` for the keycode.
-  - Check modifier state via `GetAsyncKeyState(VK_SHIFT|VK_CONTROL|VK_MENU|VK_LWIN|VK_RWIN)` (low-level hook doesn't expose flags in the struct) — mirrors the macOS modifier guard.
-  - Consume the event by returning 1 (non-zero) from the hook proc; pass through with `CallNextHookEx`.
-  - Replay on cancel: `SendInput(INPUT_KEYBOARD[])`. Mark with `INPUT.ki.dwFlags = KEYEVENTF_SCANCODE` or a custom `dwExtraInfo` magic so the replayed events are skipped when re-entering our own hook.
-  - Message pump: `GetMessageW` loop on a dedicated thread (WH_KEYBOARD_LL callbacks run on the thread that installed the hook AND that thread must pump messages).
-- `ime.rs` — `LoadKeyboardLayoutW(L"00000409", KLF_ACTIVATE)` etc., or more robust: `PostMessage(HWND_BROADCAST, WM_INPUTLANGCHANGEREQUEST, 0, hkl)`. Language IDs:
-  - en: `00000409` (US English)
-  - ja: `00000411` (Japanese)
-  - zh: `00000804` (Chinese Simplified, PRC)
-  - Users on MS Pinyin/Sogou/Rime override via the same `config.toml`.
-- `composition.rs` — `ImmGetContext(hwnd) + ImmGetCompositionStringW(hIMC, GCS_COMPSTR, …)`: non-empty buffer on focused window means composition is active. This is cheap and EXACT — use it instead of the time-based heuristic on Windows. Get focused HWND via `GetForegroundWindow` + `GetGUIThreadInfo`.
-
-`bins/imeswitchd/Cargo.toml` already has a `[target.'cfg(target_os = "macos")']` block; add the Windows counterpart. `main.rs` `#[cfg(target_os = "windows")]` branch analogous to the macOS one.
-
-TOML schema stays flat for now. If Mac and Win IDs diverge meaningfully per-user we can add `[macos]` / `[windows]` sections later — YAGNI until someone hits it.
-
-Windows-specific gotchas to watch for:
-- Some UWP/sandbox apps don't see low-level hook output; document as unsupported like we do for macOS secure input.
-- `WM_INPUTLANGCHANGEREQUEST` is per-thread, so `HWND_BROADCAST` is needed for app-wide switching; retry with `SendMessageTimeoutW` if the first attempt lags.
-- No "Accessibility permission" dance on Win but the daemon needs to run **un-elevated** — if it runs elevated it can't send input to non-elevated apps (UIPI).
-
-### Other candidates (ordered)
-
-1. **AX-based composition check for macOS (M4 v2)** — replace the 500ms heuristic with `AXUIElementCopyAttributeValue(focused, kAXSelectedTextRangeAttribute)` + marked-text detection. More correct, no magic threshold. Only worth doing if users find the current heuristic misfiring often.
-2. **Settings UI (M5)** — Tauri panel for editing the mapping and reviewing which sources are installed. Non-essential; config file is fine.
-3. **Configurable trigger character** — currently hard-coded to `;` via `KC_SEMICOLON`. Requires threading a keycode through `StateMachine::with_leader(keycode)` and the keymap. Only if a user asks.
-
-## File pointers (for orientation, not a map)
-
-- Trigger logic itself is `crates/imeswitch-core/src/state_machine.rs` — start here for anything about trigger behavior.
-- Platform glue lives in the `imeswitch-macos` crate; each file has a purpose-stating top comment.
-- The running plan document with rationale for design choices is at `/Users/zlb/.claude/plans/mdc-mac-win-jp-zh-cn-en-expressive-waffle.md`.
+- Trigger logic itself: `bins/slipkey-app/Sources/SlipkeyApp/Hook/StateMachine.swift` (Swift) and `crates/imeswitch-core/src/state_machine.rs` (Rust). Keep them semantically identical.
+- macOS hook + IME plumbing: `bins/slipkey-app/Sources/SlipkeyApp/Hook/`
+- Windows hook + IME plumbing: `crates/imeswitch-windows/src/`
+- The implementation plan that produced the macOS port: `docs/superpowers/plans/2026-04-27-slipkey-native-hook.md`
