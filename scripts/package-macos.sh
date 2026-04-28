@@ -41,7 +41,7 @@ mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" "$DIST_DIR"
 
 cp "$ROOT/bins/slipkey-app/Info.plist" "$APP_PATH/Contents/Info.plist"
 cp "$SWIFT_SCRATCH/release/$APP_NAME" "$APP_PATH/Contents/MacOS/$APP_NAME"
-cp "$ROOT/bins/imeswitch-app/icons/icon.icns" "$APP_PATH/Contents/Resources/icon.icns"
+cp "$ROOT/bins/slipkey-app/Resources/icon.icns" "$APP_PATH/Contents/Resources/icon.icns"
 
 chmod +x "$APP_PATH/Contents/MacOS/$APP_NAME"
 xattr -cr "$APP_PATH" || true

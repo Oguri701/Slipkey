@@ -1,51 +1,57 @@
 # Slipkey
 
-> Source tree, binary, and config directory keep the legacy `imeswitch` name for now.
+Type a short code in any text field to switch the OS input method. Works before Chinese/Japanese IMEs convert keystrokes into composed characters.
 
-Type a leader plus a language prefix in any text field to switch the OS input source. The default mappings are:
-
-```text
-;en -> English / ABC
-;ja -> Japanese
-;zh -> Chinese
+```
+;en  →  English / ABC
+;ja  →  Japanese
+;zh  →  Chinese
 ```
 
-The macOS build works at the physical keycode layer, before Chinese/Japanese IMEs turn the typed keys into composition text. The core trigger engine supports arbitrary two-letter language codes and alphanumeric prefixes.
+- **macOS** — native SwiftPM app (`Slipkey.app`), single Accessibility grant, status-bar icon, settings UI
+- **Windows** — Rust CLI daemon (`imeswitchd`), config via TOML
 
-## Build
+---
+
+## macOS
+
+### Requirements
+
+- macOS 13+, Apple Silicon (arm64)
+- Xcode 15+
+
+### Build & install
 
 ```bash
-cargo test --workspace
-cargo build --release
+bash scripts/package-macos.sh
 ```
 
-Run the CLI daemon:
+Runs all tests, builds `Slipkey.app`, installs to `/Applications/Slipkey.app`, ad-hoc signs it.
+
+After install:
+
+1. Open `/Applications/Slipkey.app`
+2. Go to **System Settings → Privacy & Security → Accessibility**, add Slipkey and toggle on
+3. If triggers stop working after a rebuild, run `tccutil reset Accessibility dev.zlb.imeswitch` and re-grant
+
+### Dev iteration
 
 ```bash
-./target/release/imeswitchd
+pkill -x Slipkey
+swift build -c release --package-path bins/slipkey-app --scratch-path target/slipkey-swift
+swift test --package-path bins/slipkey-app --scratch-path target/slipkey-swift
+
+# Deploy the rebuilt binary
+cp target/slipkey-swift/release/Slipkey /Applications/Slipkey.app/Contents/MacOS/Slipkey
+xattr -cr /Applications/Slipkey.app && codesign --force --sign - /Applications/Slipkey.app
+tccutil reset Accessibility dev.zlb.imeswitch
+open /Applications/Slipkey.app
+# re-grant Accessibility in System Settings
 ```
 
-List installed macOS input sources:
+### Config
 
-```bash
-./target/release/imeswitchd list
-```
-
-Generate a config from installed macOS input sources:
-
-```bash
-./target/release/imeswitchd wizard
-```
-
-## Config
-
-The macOS config lives at:
-
-```text
-~/.config/imeswitch/config.toml
-```
-
-Schema v2:
+`~/.config/imeswitch/config.toml` — editable via the **Shortcuts** tab or manually:
 
 ```toml
 leader = ";"
@@ -66,54 +72,78 @@ prefix = "zh"
 source = "com.apple.inputmethod.SCIM.Shuangpin"
 ```
 
-Old v1 configs using top-level `en`, `ja`, and `zh` keys are migrated automatically on startup. The old file is backed up as `config.toml.v1.bak`.
+Use **Detect** in Settings to populate the correct source IDs for your machine.
 
-## macOS App
-
-The `.app` target is in `bins/imeswitch-app`. It runs without a Dock icon (`LSUIElement=true`), opens settings with `Command Option Comma`, can show or hide a menu bar icon, and exposes a login-item toggle.
-
-Build the app crate:
+### Uninstall
 
 ```bash
-cargo check -p imeswitch-app
+pkill -x Slipkey
+rm -rf /Applications/Slipkey.app ~/.config/imeswitch
 ```
 
-Build a DMG:
-
-```bash
-cargo install tauri-cli --version '^2'
-./scripts/package-macos.sh
-```
-
-The script runs tests, builds the Tauri DMG, then ad-hoc signs the `.app` with `codesign --sign -`.
-
-## Install
-
-1. Open the DMG.
-2. Drag `Slipkey.app` to `/Applications`.
-3. Launch it once.
-4. Grant Accessibility permission in System Settings -> Privacy & Security -> Accessibility.
-5. Use `Command Option Comma` to open settings if the app is hidden.
-
-If macOS blocks the unsigned app, right-click `Slipkey.app`, choose Open, then confirm.
-
-## Remove
-
-Quit the app, then remove:
-
-```bash
-rm -rf /Applications/Slipkey.app
-rm -rf ~/.config/imeswitch
-```
-
-If login item was enabled, turn it off in the app before deleting it, or remove the related LaunchAgent from `~/Library/LaunchAgents`.
+---
 
 ## Windows
 
-The Windows CLI implementation compiles for win64:
+### Requirements
+
+- Windows 10/11 x64, Rust toolchain with `x86_64-pc-windows-msvc`
+
+### Build & run
 
 ```bash
-cargo check -p imeswitchd --target x86_64-pc-windows-msvc
+cargo build --release -p imeswitchd --target x86_64-pc-windows-msvc
 ```
 
-It still needs runtime testing on a real Windows machine.
+```
+imeswitchd          # start daemon
+imeswitchd list     # list installed keyboard layout IDs
+imeswitchd init     # write a starter config.toml
+```
+
+Config: `%APPDATA%\imeswitch\config.toml`. Same schema as macOS; `source` values are Windows HKL IDs (`00000409` = US English, `00000411` = Japanese, `00000804` = Chinese Simplified).
+
+> Run un-elevated — an elevated daemon cannot send input to non-elevated apps (UIPI).
+
+---
+
+## Architecture
+
+```
+bins/
+  slipkey-app/          macOS native app (Swift, SwiftPM)
+    Sources/SlipkeyApp/
+      Hook/             CGEventTap, state machine, Carbon TIS IME switching
+      Services/         Accessibility, login item, input source discovery
+      App/              AppDelegate, AppState, WindowManager, StatusItemManager
+      Views/            SwiftUI settings UI
+      Stores/           Config persistence, L10n, UserDefaults
+    Tests/              27 unit tests (state machine, keycode, composition)
+  imeswitchd/           Windows CLI daemon (Rust)
+
+crates/
+  imeswitch-core/       Pure-Rust state machine — shared by Windows daemon
+  imeswitch-windows/    Windows hook + IME switching (WH_KEYBOARD_LL, HKL)
+
+scripts/
+  package-macos.sh      Full macOS build pipeline: test → build → bundle → sign → install
+```
+
+### Why keycode-level, not text-watching
+
+Any approach that reads typed *characters* fails with CJK IMEs: `;en` becomes `；えん` in the composition buffer before any app-level code sees it. The hook runs at the HID keycode layer (`CGEventTap(HIDEventTap)` on macOS, `WH_KEYBOARD_LL` on Windows), identifies the trigger by virtual keycode, and consumes those events before the IME converts them.
+
+### State machine
+
+`StateMachine.onKeydown(HookKey) → StateMachineResponse` (Swift) / `on_keydown(Key) → Response` (Rust):
+
+| Field | Purpose |
+|---|---|
+| `suppress` | Drop the current event |
+| `replay` | Synth-post previously-suppressed keys (on cancel, `;ex` shows `;ex` not just `x`) |
+| `switchTo` | If set, call the IME-switch callback |
+
+### Two pre-state-machine guards (macOS)
+
+1. **Modifier mask** — Shift/Ctrl/Option/Cmd held → treat as `.other`. Prevents `:en` (Shift+;+en) from triggering.
+2. **Composition heuristic** — If the active source is an IME, query `AXMarkedTextRange`. Length > 0 → composition active, suppress the trigger. Falls back to a 500 ms idle window for controls that don't expose AX marked-text.
