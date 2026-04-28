@@ -2,9 +2,7 @@
 resolver = "2"
 members = [
     "crates/imeswitch-core",
-    "crates/imeswitch-macos",
     "crates/imeswitch-windows",
-    "bins/imeswitch-app",
     "bins/imeswitchd",
 ]
 
@@ -15,7 +13,6 @@ rust-version = "1.75"
 
 [workspace.dependencies]
 imeswitch-core = { path = "crates/imeswitch-core" }
-imeswitch-macos = { path = "crates/imeswitch-macos" }
 imeswitch-windows = { path = "crates/imeswitch-windows" }
 anyhow = "1"
 thiserror = "2"
