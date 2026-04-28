@@ -3,7 +3,7 @@ import Foundation
 final class SettingsStore {
     @UserDefault("menuBarIconVisible", defaultValue: true) var menuBarIconVisible: Bool
     @UserDefault("launchAtLogin", defaultValue: false) var launchAtLogin: Bool
-    @UserDefault("uiLanguage", defaultValue: Locale.current.language.languageCode?.identifier ?? "en") var uiLanguage: String
+    @UserDefault("uiLanguage", defaultValue: "en") var uiLanguage: String
 }
 
 @propertyWrapper

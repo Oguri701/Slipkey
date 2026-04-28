@@ -33,9 +33,8 @@ enum L10n {
             "Typed shortcuts": "键入式快捷键",
             "Type this first, then a prefix such as ;en. Pick a rarely used key to avoid accidental triggers.": "先输入这个字符，再输入前缀，例如 ;en。建议选择平时很少输入的按键，避免误触发。",
             "Input sources": "输入源",
-            "What it solves": "解决的问题",
-            "Slipkey gives multilingual Mac and Windows users one typed shortcut system for switching input methods.": "Slipkey 为同时使用 Mac 和 Windows 的多语言用户提供一套统一的键入式输入法切换方式。",
-            "Instead of reaching for different platform shortcuts and breaking your typing flow, type a short code like ;en, ;zh, or ;ja. Slipkey switches the system input source and removes the trigger text before it appears.": "不需要记不同平台的复杂快捷键，也不用打断思路。输入 ;en、;zh 或 ;ja 这样的短代码，Slipkey 会切换系统输入源，并在文字出现前吞掉触发文本。"
+            "Switch input methods by typing.": "通过键入切换输入法。",
+            "View on GitHub": "在 GitHub 上查看"
         ],
         "ja": [
             "General": "一般",
@@ -66,9 +65,8 @@ enum L10n {
             "Typed shortcuts": "入力式ショートカット",
             "Type this first, then a prefix such as ;en. Pick a rarely used key to avoid accidental triggers.": "最初にこの文字を入力し、続けて ;en などの接頭辞を入力します。誤動作を避けるため、あまり使わないキーがおすすめです。",
             "Input sources": "入力ソース",
-            "What it solves": "解決すること",
-            "Slipkey gives multilingual Mac and Windows users one typed shortcut system for switching input methods.": "Slipkey は、Mac と Windows を使う多言語ユーザーに統一された入力式の切り替え方法を提供します。",
-            "Instead of reaching for different platform shortcuts and breaking your typing flow, type a short code like ;en, ;zh, or ;ja. Slipkey switches the system input source and removes the trigger text before it appears.": "プラットフォームごとの複雑なショートカットで思考を止めずに、;en、;zh、;ja のような短いコードを入力するだけで、システム入力ソースを切り替え、表示前にトリガーテキストを取り除きます。"
+            "Switch input methods by typing.": "入力で入力ソースを切り替え。",
+            "View on GitHub": "GitHub で表示"
         ]
     ]
 }

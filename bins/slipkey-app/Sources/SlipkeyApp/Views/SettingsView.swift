@@ -1,28 +1,40 @@
+import AppKit
 import SwiftUI
 
-struct SettingsView: View {
+private let kGitHubURL = URL(string: "https://github.com/Oguri701/imeswitch")!
+
+private struct ContentHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
+    }
+}
+
+struct SettingsContent: View {
     @ObservedObject var appState: AppState
-    @State private var selection: SettingsSection = .general
+    @ObservedObject var tabState: SettingsTabState
 
     var body: some View {
-        VStack(spacing: 0) {
-            PreferencesToolbar(selection: $selection, language: appState.uiLanguage)
-            Divider()
-
-            Group {
-                switch selection {
-                case .general:
-                    GeneralSettingsView(appState: appState)
-                case .shortcuts:
-                    ShortcutSettingsView(appState: appState)
-                case .about:
-                    AboutSettingsView(appState: appState)
-                }
+        Group {
+            switch tabState.selection {
+            case .general:
+                GeneralSettingsView(appState: appState)
+            case .shortcuts:
+                ShortcutSettingsView(appState: appState)
+            case .about:
+                AboutSettingsView(appState: appState)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .background(Color(nsColor: .windowBackgroundColor))
         }
-        .frame(width: 560, height: 380)
+        .frame(maxWidth: .infinity, alignment: .top)
+        .background(
+            GeometryReader { geo in
+                Color.clear.preference(key: ContentHeightKey.self, value: geo.size.height)
+            }
+        )
+        .onPreferenceChange(ContentHeightKey.self) { height in
+            guard height > 10 else { return }
+            tabState.onContentHeight?(height)
+        }
     }
 }
 
@@ -47,44 +59,6 @@ enum SettingsSection: String, CaseIterable, Identifiable {
         case .shortcuts: L10n.text("Shortcuts", language)
         case .about: L10n.text("About", language)
         }
-    }
-}
-
-struct PreferencesToolbar: View {
-    @Binding var selection: SettingsSection
-    let language: String
-
-    var body: some View {
-        HStack(spacing: 14) {
-            ForEach(SettingsSection.allCases) { section in
-                Button {
-                    selection = section
-                } label: {
-                    VStack(spacing: 5) {
-                        Image(systemName: section.systemImage)
-                            .font(.system(size: 20, weight: .regular))
-                            .symbolRenderingMode(.hierarchical)
-                        Text(section.title(language))
-                            .font(.caption)
-                            .lineLimit(1)
-                    }
-                    .frame(width: 68, height: 48)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(selection == section ? Color.accentColor : Color.primary)
-                .background {
-                    if selection == section {
-                        RoundedRectangle(cornerRadius: 7, style: .continuous)
-                            .fill(Color.accentColor.opacity(0.12))
-                    }
-                }
-            }
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 7)
-        .padding(.bottom, 6)
-        .background(.bar)
     }
 }
 
@@ -202,7 +176,7 @@ struct ShortcutSettingsView: View {
                     }
                     .padding(.top, 1)
                 }
-                .frame(width: 388, alignment: .leading)
+                .frame(width: 330, alignment: .leading)
             }
         }
         .onAppear {
@@ -213,31 +187,41 @@ struct ShortcutSettingsView: View {
 
 struct ShortcutTable: View {
     @ObservedObject var appState: AppState
-    private let columns = [
-        GridItem(.fixed(82), spacing: 10, alignment: .leading),
-        GridItem(.fixed(70), spacing: 10, alignment: .leading),
-        GridItem(.fixed(190), spacing: 0, alignment: .leading)
-    ]
+
+    // tableW - hPad*2 - langW - gap - prefW - gap = sourceW
+    private let tableW:  CGFloat = 330
+    private let hPad:    CGFloat = 10
+    private let langW:   CGFloat = 70
+    private let prefW:   CGFloat = 52
+    private let gap:     CGFloat = 8
+    private var sourceW: CGFloat { tableW - hPad * 2 - langW - gap - prefW - gap }
 
     var body: some View {
         VStack(spacing: 0) {
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 0) {
+            HStack(spacing: 0) {
                 TableHeader(L10n.text("Language", appState.uiLanguage))
+                    .frame(width: langW, alignment: .leading)
+                Spacer().frame(width: gap)
                 TableHeader(L10n.text("Prefix", appState.uiLanguage))
+                    .frame(width: prefW, alignment: .leading)
+                Spacer().frame(width: gap)
                 TableHeader(L10n.text("Input source", appState.uiLanguage))
+                    .frame(width: sourceW, alignment: .leading)
             }
-            .padding(.horizontal, 12)
-            .padding(.bottom, 5)
+            .padding(.horizontal, hPad)
+            .padding(.bottom, 4)
 
             ForEach($appState.config.mappings) { $mapping in
-                LazyVGrid(columns: columns, alignment: .leading, spacing: 0) {
+                HStack(spacing: 0) {
                     Text(languageName(mapping.language))
                         .lineLimit(1)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(width: langW, alignment: .leading)
+                    Spacer().frame(width: gap)
                     TextField("", text: $mapping.prefix)
                         .textFieldStyle(.roundedBorder)
                         .controlSize(.small)
-                        .frame(width: 58)
+                        .frame(width: prefW)
+                    Spacer().frame(width: gap)
                     Picker("", selection: $mapping.source) {
                         ForEach(appState.detectedSources.filter { $0.language == mapping.language }) { source in
                             Text(source.name).tag(source.sourceID)
@@ -248,20 +232,21 @@ struct ShortcutTable: View {
                     }
                     .labelsHidden()
                     .controlSize(.small)
-                    .frame(width: 190, alignment: .leading)
+                    .frame(width: sourceW, alignment: .leading)
+                    .clipped()
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 4)
+                .padding(.horizontal, hPad)
+                .padding(.vertical, 3)
                 if mapping.id != appState.config.mappings.last?.id {
-                    Divider().padding(.leading, 12)
+                    Divider().padding(.leading, hPad)
                 }
             }
         }
-        .padding(.vertical, 6)
-        .frame(width: 388, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .padding(.vertical, 5)
+        .frame(width: tableW)
+        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
         )
     }
@@ -280,31 +265,48 @@ struct AboutSettingsView: View {
     @ObservedObject var appState: AppState
 
     var body: some View {
-        PreferenceContent {
-            VStack(spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top, spacing: 16) {
                 Image(nsImage: NSApp.applicationIconImage)
                     .resizable()
-                    .frame(width: 64, height: 64)
-                    .cornerRadius(14)
-                Text("Slipkey")
-                    .font(.title2.weight(.semibold))
-                Text("0.1.0")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 4)
-            .padding(.bottom, 10)
+                    .frame(width: 76, height: 76)
 
-            PreferenceSection(title: L10n.text("What it solves", appState.uiLanguage)) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(L10n.text("Slipkey gives multilingual Mac and Windows users one typed shortcut system for switching input methods.", appState.uiLanguage))
-                    Text(L10n.text("Instead of reaching for different platform shortcuts and breaking your typing flow, type a short code like ;en, ;zh, or ;ja. Slipkey switches the system input source and removes the trigger text before it appears.", appState.uiLanguage))
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Slipkey")
+                        .font(.system(size: 38, weight: .ultraLight))
+                    Text(L10n.text("Switch input methods by typing.", appState.uiLanguage))
+                        .font(.system(size: 11, weight: .light))
+                        .foregroundStyle(.primary)
+                    Text("v\(appVersion())  ·  © 2026 zlb")
+                        .font(.system(size: 9))
+                        .foregroundStyle(Color(nsColor: .disabledControlTextColor))
+                        .padding(.top, 2)
                 }
-                .foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
             }
+            .padding(.horizontal, 20)
+            .padding(.top, 16)
+            .padding(.bottom, 16)
+
+            Divider()
+                .padding(.leading, 20)
+
+            HStack(spacing: 8) {
+                Button {
+                    NSWorkspace.shared.open(kGitHubURL)
+                } label: {
+                    Text(L10n.text("View on GitHub", appState.uiLanguage))
+                        .frame(minWidth: 110)
+                }
+                .controlSize(.regular)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func appVersion() -> String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
     }
 }
 
@@ -312,15 +314,13 @@ struct PreferenceContent<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                content
-            }
-            .frame(maxWidth: 510)
-            .padding(.horizontal, 22)
-            .padding(.vertical, 20)
-            .frame(maxWidth: .infinity, alignment: .center)
+        VStack(alignment: .leading, spacing: 12) {
+            content
         }
+        .frame(maxWidth: 420)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 14)
+        .frame(maxWidth: .infinity, alignment: .center)
     }
 }
 
@@ -329,30 +329,14 @@ struct PreferenceRow<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .top, spacing: 12) {
             Text(label)
-                .font(.system(size: 14))
+                .font(.system(size: 13))
                 .foregroundStyle(.secondary)
-                .frame(width: 94, alignment: .trailing)
+                .frame(width: 70, alignment: .trailing)
                 .padding(.top, 4)
             content
                 .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
-}
-
-struct PreferenceSection<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.secondary)
-            VStack(alignment: .leading, spacing: 10) {
-                content
-            }
         }
     }
 }
@@ -366,26 +350,13 @@ struct PreferenceToggleRow: View {
         Toggle(isOn: $isOn) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
-                    .font(.system(size: 14))
+                    .font(.system(size: 13))
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
         }
         .toggleStyle(.checkbox)
-    }
-}
-
-struct PreferencePickerRow<Content: View>: View {
-    let title: String
-    @ViewBuilder let content: Content
-
-    var body: some View {
-        HStack {
-            Text(title)
-            Spacer()
-            content
-        }
     }
 }
 
@@ -401,20 +372,5 @@ struct TableHeader: View {
             .font(.caption.weight(.semibold))
             .foregroundStyle(.secondary)
             .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-struct KeyboardShortcutBadge: View {
-    let label: String
-
-    init(_ label: String) {
-        self.label = label
-    }
-
-    var body: some View {
-        Text(label)
-            .font(.system(size: 12, weight: .medium, design: .monospaced))
-            .frame(minWidth: 20, minHeight: 18)
-            .background(.quaternary, in: RoundedRectangle(cornerRadius: 4, style: .continuous))
     }
 }
