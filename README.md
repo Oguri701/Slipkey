@@ -9,7 +9,7 @@ Type a short code in any text field to switch the OS input method. Works before 
 ```
 
 - **macOS** — native SwiftPM app (`Slipkey.app`), single Accessibility grant, status-bar icon, settings UI
-- **Windows** — Rust CLI daemon (`imeswitchd`), config via TOML
+- **Windows** — Rust tray app (`Slipkey.exe`), egui settings UI, config via TOML
 
 ---
 
@@ -89,21 +89,30 @@ rm -rf /Applications/Slipkey.app ~/.config/imeswitch
 
 - Windows 10/11 x64, Rust toolchain with `x86_64-pc-windows-msvc`
 
-### Build & run
+### Build
 
 ```bash
-cargo build --release -p imeswitchd --target x86_64-pc-windows-msvc
+cargo build --release -p slipkey-windows --target x86_64-pc-windows-msvc
 ```
 
-```
-imeswitchd          # start daemon
-imeswitchd list     # list installed keyboard layout IDs
-imeswitchd init     # write a starter config.toml
-```
+Copy `target/x86_64-pc-windows-msvc/release/Slipkey.exe` to the machine and run it.
 
-Config: `%APPDATA%\imeswitch\config.toml`. Same schema as macOS; `source` values are Windows HKL IDs (`00000409` = US English, `00000411` = Japanese, `00000804` = Chinese Simplified).
+### Usage
 
-> Run un-elevated — an elevated daemon cannot send input to non-elevated apps (UIPI).
+1. Double-click `Slipkey.exe` - a tray icon appears in the notification area
+2. Right-click the tray icon and choose **Open Settings** to configure shortcuts
+3. Go to the **General** tab and enable **Launch at login**
+
+### Config
+
+`%APPDATA%\imeswitch\config.toml` - editable via the **Shortcuts** tab or manually. Same schema as macOS; `source` values are Windows HKL IDs (`00000409` = US English, `00000411` = Japanese, `00000804` = Chinese Simplified).
+
+### Uninstall
+
+1. Quit via the tray menu
+2. Delete `Slipkey.exe`
+3. Delete `%APPDATA%\imeswitch\`
+4. Optionally remove `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Slipkey` from the registry
 
 ---
 
@@ -119,10 +128,15 @@ bins/
       Views/            SwiftUI settings UI
       Stores/           Config persistence, L10n, UserDefaults
     Tests/              27 unit tests (state machine, keycode, composition)
-  imeswitchd/           Windows CLI daemon (Rust)
+  slipkey-windows/      Windows native app (Rust, egui)
+    src/
+      hook_thread.rs    WH_KEYBOARD_LL + PeekMessageW loop
+      startup.rs        Registry launch-at-login
+      tray.rs           System tray icon + menu
+      ui/               egui settings window (General/Shortcuts/About)
 
 crates/
-  imeswitch-core/       Pure-Rust state machine — shared by Windows daemon
+  imeswitch-core/       Pure-Rust state machine shared by platform apps
   imeswitch-windows/    Windows hook + IME switching (WH_KEYBOARD_LL, HKL)
 
 scripts/
