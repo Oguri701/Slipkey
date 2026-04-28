@@ -48,3 +48,27 @@ fn focused_window() -> windows_sys::Win32::Foundation::HWND {
         }
     }
 }
+
+/// Returns true if the foreground thread has a CJK keyboard layout active.
+/// Used as a fallback when IMM32 cannot detect TSF-based composition (Microsoft
+/// Pinyin, Microsoft Japanese IME, etc.).
+pub fn is_cjk_ime_active() -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetForegroundWindow, GetWindowThreadProcessId,
+    };
+
+    unsafe {
+        let fg = GetForegroundWindow();
+        let tid = if fg.is_null() {
+            0
+        } else {
+            GetWindowThreadProcessId(fg, std::ptr::null_mut())
+        };
+        let hkl = GetKeyboardLayout(tid);
+        let langid = (hkl as usize) & 0xFFFF;
+        // 0x0411 Japanese, 0x0804 Chinese Simplified,
+        // 0x0404 Chinese Traditional, 0x0412 Korean
+        matches!(langid, 0x0411 | 0x0804 | 0x0404 | 0x0412)
+    }
+}
