@@ -1,8 +1,11 @@
-use anyhow::{Context as _, Result};
+use anyhow::Result;
 
+#[cfg(target_os = "windows")]
 const RUN_SUBKEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
+#[cfg(target_os = "windows")]
 const APP_VALUE: &str = "Slipkey";
 
+#[cfg(target_os = "windows")]
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -51,6 +54,7 @@ pub fn is_enabled() -> bool {
 pub fn set_enabled(enabled: bool) -> Result<()> {
     #[cfg(target_os = "windows")]
     {
+        use anyhow::Context as _;
         use windows_sys::Win32::System::Registry::{
             RegCloseKey, RegDeleteValueW, RegOpenKeyExW, RegSetValueExW, HKEY_CURRENT_USER,
             KEY_SET_VALUE, REG_SZ,

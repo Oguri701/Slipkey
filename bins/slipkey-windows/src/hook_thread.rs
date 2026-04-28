@@ -4,6 +4,7 @@ use imeswitch_windows::config::Config;
 
 use crate::app::SharedState;
 
+#[cfg_attr(not(target_os = "windows"), allow(dead_code))]
 pub enum HookCmd {
     Restart(Config),
 }
