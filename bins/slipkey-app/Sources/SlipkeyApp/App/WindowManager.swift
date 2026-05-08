@@ -53,11 +53,16 @@ final class WindowManager: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
         tabState.onContentHeight = { [weak self, weak window] height in
             guard let self, let window, height > 10 else { return }
+            // Safety net: if SwiftUI ever reports an inflated content
+            // height (we hit a feedback loop in 0.1.1 where the height
+            // grew every Shortcuts repaint), refuse to grow the window
+            // beyond the visible screen area.
+            let clamped = Self.clampToScreen(height)
             if self.isInitialDisplay {
                 self.isInitialDisplay = false
-                self.snapHeight(window: window, to: height)
+                self.snapHeight(window: window, to: clamped)
             } else {
-                self.animate(window: window, toContentHeight: height)
+                self.animate(window: window, toContentHeight: clamped)
             }
         }
 
@@ -68,6 +73,14 @@ final class WindowManager: NSObject, NSWindowDelegate, NSToolbarDelegate {
         }
 
         return window
+    }
+
+    /// Clamp a reported content height so a runaway SwiftUI measurement
+    /// can't push the Settings window taller than the screen the user is
+    /// looking at. 120 pt of headroom keeps the title bar and Dock visible.
+    static func clampToScreen(_ height: CGFloat) -> CGFloat {
+        let screenLimit = (NSScreen.main?.visibleFrame.height ?? 1200) - 120
+        return min(height, max(screenLimit, 200))
     }
 
     private func snapHeight(window: NSWindow, to contentHeight: CGFloat) {

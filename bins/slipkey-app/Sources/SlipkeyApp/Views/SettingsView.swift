@@ -25,12 +25,21 @@ struct SettingsContent: View {
                 AboutSettingsView(appState: appState)
             }
         }
-        .frame(maxWidth: .infinity, alignment: .top)
+        // The order here matters. `GeometryReader` must wrap the bare
+        // `Group` (the actual content) so it reports the fitting size of
+        // whichever tab is rendered. Putting `.background(GeometryReader…)`
+        // *after* `.frame(maxWidth: .infinity, alignment: .top)` made it
+        // measure the outer frame layer instead — and because that frame
+        // uses `alignment: .top`, SwiftUI is allowed to propose the full
+        // NSHostingView height to it. That feedback loop is what stretched
+        // the window vertically every time the user opened the Shortcuts
+        // tab and `onAppear` triggered a re-layout.
         .background(
             GeometryReader { geo in
                 Color.clear.preference(key: ContentHeightKey.self, value: geo.size.height)
             }
         )
+        .frame(maxWidth: .infinity, alignment: .top)
         .onPreferenceChange(ContentHeightKey.self) { height in
             guard height > 10 else { return }
             tabState.onContentHeight?(height)
