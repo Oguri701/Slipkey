@@ -1,29 +1,59 @@
 use eframe::egui;
 
+use super::{FONT_BODY, FONT_CAPTION, FONT_TITLE, WIN11_ACCENT, WIN11_TEXT, WIN11_TEXT_SEC};
+
 pub fn show(ui: &mut egui::Ui, icon: Option<&egui::TextureHandle>) {
-    ui.add_space(8.0);
-    ui.horizontal(|ui| {
-        if let Some(tex) = icon {
-            ui.image((tex.id(), egui::vec2(64.0, 64.0)));
-            ui.add_space(12.0);
-        }
-        ui.vertical(|ui| {
-            ui.label(egui::RichText::new("Slipkey").size(34.0).strong());
-            ui.add_space(2.0);
-            ui.label("Switch input methods by typing.");
-            ui.add_space(4.0);
-            let version = env!("CARGO_PKG_VERSION");
-            ui.label(
-                egui::RichText::new(format!("v{version}  (c) 2026 oguri701"))
-                    .small()
-                    .weak(),
+    super::preference_content(ui, |ui| {
+        super::win11_card(ui, |ui| {
+            ui.horizontal(|ui| {
+                if let Some(tex) = icon {
+                    ui.image((tex.id(), egui::vec2(56.0, 56.0)));
+                    ui.add_space(14.0);
+                }
+                ui.vertical(|ui| {
+                    ui.add_space(2.0);
+                    ui.label(
+                        egui::RichText::new("Slipkey")
+                            .size(FONT_TITLE)
+                            .color(WIN11_TEXT),
+                    );
+                    ui.add_space(2.0);
+                    ui.label(
+                        egui::RichText::new("Switch input methods by typing.")
+                            .size(FONT_BODY)
+                            .color(WIN11_TEXT_SEC),
+                    );
+                    ui.add_space(4.0);
+                    let version = env!("CARGO_PKG_VERSION");
+                    ui.label(
+                        egui::RichText::new(format!("Version {version}  ·  © 2026 oguri701"))
+                            .size(FONT_CAPTION)
+                            .color(WIN11_TEXT_SEC),
+                    );
+                });
+            });
+
+            ui.add_space(14.0);
+            ui.painter().hline(
+                ui.max_rect().x_range(),
+                ui.cursor().min.y,
+                egui::Stroke::new(1.0, super::WIN11_SEPARATOR),
             );
+            ui.add_space(10.0);
+
+            if ui
+                .add(
+                    egui::Button::new(
+                        egui::RichText::new("View on GitHub")
+                            .size(FONT_BODY)
+                            .color(WIN11_ACCENT),
+                    )
+                    .frame(false),
+                )
+                .clicked()
+            {
+                let _ = open::that("https://github.com/Oguri701/Slipkey");
+            }
         });
     });
-    ui.add_space(8.0);
-    ui.separator();
-    ui.add_space(8.0);
-    if ui.button("View on GitHub").clicked() {
-        let _ = open::that("https://github.com/Oguri701/Slipkey");
-    }
 }

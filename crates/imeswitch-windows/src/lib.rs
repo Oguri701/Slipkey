@@ -7,7 +7,9 @@ pub mod composition;
 #[cfg(target_os = "windows")]
 pub mod hook;
 
-pub use ime::{ImeSwitcher, Mapping, SourceInfo, SwitchError, DEFAULT_LEADER};
+pub use ime::{
+    SourceInfo, SwitchError, WinEntry, WinImeMode, WinMapping, WindowsImeSwitcher, DEFAULT_LEADER,
+};
 
 #[cfg(target_os = "windows")]
 pub use hook::{EventHook, HookError};

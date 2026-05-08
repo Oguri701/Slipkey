@@ -4,3 +4,9 @@
 bins/imeswitch-app/gen/
 bins/slipkey-app/.build/
 dist/
+
+# Skill / agent scratch directories.
+.superpowers/
+
+# Loose patches generated for ad-hoc transfer between machines.
+*.patch

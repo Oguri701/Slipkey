@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use imeswitch_core::Language;
 use serde::{Deserialize, Serialize};
 
-use crate::ime::{Mapping, MappingEntry, DEFAULT_LEADER};
+use crate::ime::{WinEntry, WinImeMode, WinMapping, DEFAULT_LEADER};
 use crate::keymap::leader_vk_for;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -13,6 +13,7 @@ use crate::keymap::leader_vk_for;
 pub struct Config {
     pub leader: Option<String>,
     pub mappings: Option<Vec<MappingConfig>>,
+    // Legacy v1 per-language overrides (migrated to mappings on first load)
     pub en: Option<String>,
     pub ja: Option<String>,
     pub zh: Option<String>,
@@ -23,35 +24,47 @@ pub struct Config {
 pub struct MappingConfig {
     pub language: String,
     pub prefix: String,
-    pub source: String,
+    /// HKL identifier for CJK and other non-English languages.
+    /// `None` for English, which uses alphanumeric mode without switching layout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 impl Default for Config {
     fn default() -> Self {
-        Self::from_mapping(&Mapping::default())
+        Self::from_mapping(&WinMapping::default())
     }
 }
 
 impl MappingConfig {
-    fn from_entry(entry: &MappingEntry) -> Self {
+    fn from_entry(entry: &WinEntry) -> Self {
         Self {
             language: entry.language.to_string(),
             prefix: entry.prefix.clone(),
-            source: entry.source.clone(),
+            source: entry.hkl_id.clone(),
         }
     }
 
-    fn into_entry(self) -> Option<MappingEntry> {
+    fn into_entry(self) -> Option<WinEntry> {
         if self.language.len() != 2 {
             return None;
         }
         if !self.prefix.is_empty() && !self.prefix.chars().all(|c| c.is_ascii_alphanumeric()) {
             return None;
         }
-        Some(MappingEntry {
+        let mode = WinImeMode::for_language(&self.language);
+        // Alphanumeric entries (English) never need an HKL — discard any legacy source.
+        let hkl_id = match mode {
+            WinImeMode::Alphanumeric => None,
+            WinImeMode::Native | WinImeMode::LayoutOnly => {
+                self.source.filter(|s| !s.is_empty())
+            }
+        };
+        Some(WinEntry {
             language: Language::from(self.language),
             prefix: self.prefix.to_ascii_lowercase(),
-            source: self.source,
+            hkl_id,
+            mode,
         })
     }
 }
@@ -65,29 +78,33 @@ impl Config {
             .unwrap_or(DEFAULT_LEADER)
     }
 
-    pub fn into_mapping(self) -> Mapping {
+    pub fn into_mapping(self) -> WinMapping {
         let leader = self.leader_char();
         if let Some(mappings) = self.mappings {
             let entries = mappings
                 .into_iter()
                 .filter_map(MappingConfig::into_entry)
                 .collect::<Vec<_>>();
-            return Mapping::with_leader(leader, entries);
+            return WinMapping::with_leader(leader, entries);
         }
 
-        let mut entries = Mapping::default().entries().to_vec();
+        // Legacy v1: per-language source overrides
+        let mut entries = WinMapping::default().entries().to_vec();
         for entry in &mut entries {
+            // Alphanumeric entries (English) never switch layout; skip legacy override.
+            if entry.mode == WinImeMode::Alphanumeric {
+                continue;
+            }
             let override_source = match entry.language.as_str() {
-                "en" => self.en.as_ref(),
                 "ja" => self.ja.as_ref(),
                 "zh" => self.zh.as_ref(),
                 _ => None,
             };
             if let Some(source) = override_source {
-                entry.source = source.clone();
+                entry.hkl_id = Some(source.clone());
             }
         }
-        Mapping::with_leader(leader, entries)
+        WinMapping::with_leader(leader, entries)
     }
 
     pub fn is_legacy_v1(&self) -> bool {
@@ -98,7 +115,7 @@ impl Config {
         toml::to_string_pretty(&Config::default()).expect("default config serializes")
     }
 
-    pub fn from_mapping(mapping: &Mapping) -> Self {
+    pub fn from_mapping(mapping: &WinMapping) -> Self {
         Self {
             leader: Some(mapping.leader().to_string()),
             mappings: Some(
@@ -191,21 +208,21 @@ fn migrate_v1(path: &Path, original_text: String, legacy: Config) -> LoadOutcome
     }
 }
 
-pub fn load_or_default() -> (Mapping, LoadOutcome) {
+pub fn load_or_default() -> (WinMapping, LoadOutcome) {
     let path = default_path();
     let outcome = load_from(&path);
     let mapping = match &outcome {
         LoadOutcome::Loaded { config, .. } | LoadOutcome::Migrated { config, .. } => {
             config.clone().into_mapping()
         }
-        LoadOutcome::Missing { .. } => Mapping::default(),
+        LoadOutcome::Missing { .. } => WinMapping::default(),
         LoadOutcome::ParseError { path, error } => {
             log::warn!(
                 "{} is malformed: {} - ignoring, using defaults",
                 path.display(),
                 error
             );
-            Mapping::default()
+            WinMapping::default()
         }
     };
     (mapping, outcome)
@@ -235,7 +252,7 @@ mod tests {
     #[test]
     fn empty_config_uses_defaults() {
         let mapping = toml::from_str::<Config>("").unwrap().into_mapping();
-        assert_eq!(mapping, Mapping::default());
+        assert_eq!(mapping, WinMapping::default());
     }
 
     #[test]
@@ -252,20 +269,45 @@ source = "0000040C"
         )
         .unwrap()
         .into_mapping();
-        assert_eq!(mapping.source_for(&Language::from("fr")), Some("0000040C"));
+        let fr = mapping.entry_for(&Language::from("fr")).unwrap();
+        assert_eq!(fr.hkl_id.as_deref(), Some("0000040C"));
+        assert_eq!(fr.mode, WinImeMode::LayoutOnly);
     }
 
     #[test]
-    fn legacy_config_overrides_only_present_keys() {
+    fn english_entry_has_no_hkl_even_if_source_in_config() {
+        // Legacy or manually-added source for English is ignored in the new model.
+        let mapping = toml::from_str::<Config>(
+            r#"
+leader = ";"
+
+[[mappings]]
+language = "en"
+prefix = "en"
+source = "00000409"
+"#,
+        )
+        .unwrap()
+        .into_mapping();
+        let en = mapping.entry_for(&Language::from("en")).unwrap();
+        assert_eq!(en.hkl_id, None);
+        assert_eq!(en.mode, WinImeMode::Alphanumeric);
+    }
+
+    #[test]
+    fn legacy_config_overrides_only_present_cjk_keys() {
         let mapping = toml::from_str::<Config>(r#"zh = "E0200804""#)
             .unwrap()
             .into_mapping();
-        let default = Mapping::default();
+        let default = WinMapping::default();
         assert_eq!(
-            mapping.source_for(&Language::from("en")),
-            default.source_for(&Language::from("en"))
+            mapping.entry_for(&Language::from("en")),
+            default.entry_for(&Language::from("en"))
         );
-        assert_eq!(mapping.source_for(&Language::from("zh")), Some("E0200804"));
+        assert_eq!(
+            mapping.entry_for(&Language::from("zh")).unwrap().hkl_id.as_deref(),
+            Some("E0200804")
+        );
     }
 
     #[test]
@@ -276,13 +318,13 @@ source = "0000040C"
     #[test]
     fn template_round_trips() {
         let parsed = toml::from_str::<Config>(&Config::template_toml()).unwrap();
-        assert_eq!(parsed.into_mapping(), Mapping::default());
+        assert_eq!(parsed.into_mapping(), WinMapping::default());
     }
 
     #[test]
     fn save_to_and_reload_round_trips() {
         let tmp = std::env::temp_dir().join("imeswitch-test-save-round-trip.toml");
-        let mapping = Mapping::default();
+        let mapping = WinMapping::default();
         let config = Config::from_mapping(&mapping);
         save_to(&config, &tmp).expect("save_to failed");
         match load_from(&tmp) {

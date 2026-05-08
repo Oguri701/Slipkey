@@ -6,7 +6,9 @@ mod startup;
 mod tray;
 mod ui;
 
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex};
+
+use eframe::egui;
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -14,8 +16,7 @@ fn main() {
         .init();
 
     let state: app::SharedState = Arc::new(Mutex::new(app::AppState::load()));
-    let (hook_tx, hook_rx) = mpsc::channel::<hook_thread::HookCmd>();
-    hook_thread::spawn(state.clone(), hook_rx);
+    let hook = hook_thread::spawn(state.clone());
 
     let (icon_rgba, icon_w, icon_h) = load_icon();
     let tray = tray::Tray::new(icon_rgba.clone(), icon_w, icon_h);
@@ -23,8 +24,9 @@ fn main() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Slipkey")
-            .with_inner_size([500.0, 360.0])
+            .with_inner_size([560.0, 520.0])
             .with_resizable(false)
+            .with_decorations(false)
             .with_visible(false)
             .with_icon(egui::IconData {
                 rgba: icon_rgba.clone(),
@@ -35,7 +37,7 @@ fn main() {
     };
 
     let state_for_app = state.clone();
-    let hook_tx_for_app = hook_tx.clone();
+    let hook_for_app = hook.clone();
     let icon_for_app = icon_rgba.clone();
 
     eframe::run_native(
@@ -45,7 +47,7 @@ fn main() {
             Ok(Box::new(ui::SettingsWindow::new(
                 cc,
                 state_for_app,
-                hook_tx_for_app,
+                hook_for_app,
                 tray,
                 &icon_for_app,
                 icon_w,

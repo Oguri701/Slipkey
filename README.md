@@ -2,7 +2,7 @@
 
 Slipkey 是一个面向多语言、多平台用户的输入法切换工具。它把 macOS 和 Windows PC 上原本不一致的输入法切换方式，统一成一套可记忆、可自定义的键入式快捷键。
 
-如果你经常在中文、英文、日文等多语言之间切换，或者每天在 Mac 和 Windows 之间来回工作，你可能已经习惯了这些小打断：
+如果你经常在中文、英文、日文之间切换，或者每天在 Mac 和 Windows 之间来回工作，你可能已经习惯了这些小打断：
 
 - 系统默认快捷键不一致，Mac 和 Windows 的肌肉记忆互相打架
 - 输入法切错后才发现，删掉、切回去、重打，思路被打断
@@ -124,11 +124,32 @@ target/x86_64-pc-windows-msvc/release/Slipkey.exe
 
 `%APPDATA%\imeswitch\config.toml`
 
-配置格式和 macOS 相同。Windows 下的 `source` 是 HKL ID，例如：
+```toml
+leader = ";"
 
-- `00000409`：US English
+[[mappings]]
+language = "en"
+prefix = "en"
+# English 不需要 source：;en 直接把当前 CJK IME 切为英文模式
+
+[[mappings]]
+language = "ja"
+prefix = "ja"
+source = "00000411"   # HKL ID，可通过设置页面的 Detect 按钮自动填入
+
+[[mappings]]
+language = "zh"
+prefix = "zh"
+source = "00000804"
+```
+
+`source` 是 Windows HKL ID（十六进制），常见值：
+
 - `00000411`：Japanese
 - `00000804`：Chinese Simplified
+- `E0200804`：Microsoft Pinyin
+
+英文条目无需填写 `source`；设置页面的 **Detect** 按钮会自动检测并填入本机已安装的 CJK 布局。
 
 ### 卸载
 
@@ -293,7 +314,26 @@ cargo build --release -p slipkey-windows --target x86_64-pc-windows-msvc
 
 `%APPDATA%\imeswitch\config.toml`
 
-The schema matches macOS. On Windows, `source` values are HKL IDs such as `00000409`, `00000411`, and `00000804`.
+```toml
+leader = ";"
+
+[[mappings]]
+language = "en"
+prefix = "en"
+# No source needed: ;en switches the active CJK IME to alphanumeric mode
+
+[[mappings]]
+language = "ja"
+prefix = "ja"
+source = "00000411"   # HKL ID — use Detect in Settings to populate automatically
+
+[[mappings]]
+language = "zh"
+prefix = "zh"
+source = "00000804"
+```
+
+`source` is a Windows HKL ID (hex). Common values: `00000411` (Japanese), `00000804` (Chinese Simplified), `E0200804` (Microsoft Pinyin). English entries do not need a `source`; use **Detect** in the Settings window to auto-fill installed CJK layouts.
 
 ### Uninstall
 

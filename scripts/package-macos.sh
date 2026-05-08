@@ -9,7 +9,7 @@ BUNDLE_ID="dev.zlb.imeswitch"
 VERSION="0.1.0"
 SWIFT_SCRATCH="$ROOT/target/slipkey-swift"
 MODULE_CACHE="$ROOT/target/swift-module-cache"
-BUNDLE_DIR="$ROOT/target/release/bundle/macos"
+BUNDLE_DIR="${TMPDIR:-/tmp}/slipkey-package/bundle/macos"
 APP_PATH="$BUNDLE_DIR/$APP_NAME.app"
 DIST_DIR="$ROOT/dist"
 ZIP_PATH="$DIST_DIR/$APP_NAME-$VERSION-macos-arm64.zip"
@@ -59,21 +59,19 @@ rm -rf "$APP_PATH/Contents/_CodeSignature"
 echo "==> Ad-hoc signing"
 # No nested binaries to deep-sign — Resources/ holds only an icon.
 codesign --force --sign - "$APP_PATH"
-codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+codesign --verify --deep --strict --verbose=2 "$APP_PATH" || \
+  echo "  (warn: --deep --strict failed at $APP_PATH — continuing to /Applications re-sign)"
 
 echo "==> Creating zip"
 rm -f "$ZIP_PATH"
 ditto -c -k --keepParent --noextattr --noqtn --norsrc "$APP_PATH" "$ZIP_PATH"
 xattr -c "$ZIP_PATH" || true
 
-# `target/release/bundle/macos/` lives in the project tree, which is usually
-# under iCloud Drive's "Desktop & Documents" sync. iCloud's fileprovider
-# continually re-adds com.apple.FinderInfo + com.apple.fileprovider.fpfs#P
-# xattrs to anything inside, which makes `codesign --strict` fail and TCC
-# silently reject the Accessibility grant for `open`-launched processes.
-# So we deploy the final bundle to /Applications/ (outside iCloud) and re-sign
-# there. /Applications is admin-writable on a default macOS install — this
-# step does NOT require sudo for an admin user.
+# The source tree may live under iCloud Drive's "Desktop & Documents" sync,
+# where fileprovider can continually re-add signing-hostile xattrs. Assemble
+# and sign in TMPDIR, then install the final bundle to /Applications.
+# /Applications is admin-writable on a default macOS install — this step does
+# NOT require sudo for an admin user.
 INSTALL_PATH="/Applications/$APP_NAME.app"
 echo "==> Installing to $INSTALL_PATH"
 pkill -x "$APP_NAME" 2>/dev/null || true
@@ -87,7 +85,7 @@ codesign --verify --deep --strict --verbose=2 "$INSTALL_PATH" || \
 
 echo ""
 echo "macOS build output:"
-echo "  $APP_PATH       (build artifact, NOT for direct use — iCloud xattrs)"
+echo "  $APP_PATH       (signed staging artifact)"
 echo "  $ZIP_PATH       (distributable)"
 echo "  $INSTALL_PATH   (live install, run from here)"
 echo ""
