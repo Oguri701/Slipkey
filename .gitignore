@@ -10,3 +10,15 @@ dist/
 
 # Loose patches generated for ad-hoc transfer between machines.
 *.patch
+
+# macOS Finder copy-and-paste duplicates ("foo 2.rs", "foo 2.swift" …).
+# Cargo treats `*.rs` in `tests/` as a separate test target, and "foo 2"
+# is not a valid crate name, so a stray copy will break `cargo test`.
+* 2.rs
+* 2.swift
+* 2.toml
+* 2.lock
+* 2.md
+* 2.png
+* 2.icns
+
