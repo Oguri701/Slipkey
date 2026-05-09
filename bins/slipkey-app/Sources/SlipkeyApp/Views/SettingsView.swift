@@ -25,21 +25,28 @@ struct SettingsContent: View {
                 AboutSettingsView(appState: appState)
             }
         }
-        // The order here matters. `GeometryReader` must wrap the bare
-        // `Group` (the actual content) so it reports the fitting size of
-        // whichever tab is rendered. Putting `.background(GeometryReader…)`
-        // *after* `.frame(maxWidth: .infinity, alignment: .top)` made it
-        // measure the outer frame layer instead — and because that frame
-        // uses `alignment: .top`, SwiftUI is allowed to propose the full
-        // NSHostingView height to it. That feedback loop is what stretched
-        // the window vertically every time the user opened the Shortcuts
-        // tab and `onAppear` triggered a re-layout.
+        // Pin the view's vertical extent to its fitting size.
+        //
+        // Without this, the outer `.frame(maxWidth: .infinity, alignment:
+        // .top)` is allowed to grow taller than its child whenever
+        // SwiftUI proposes the NSHostingView's full content area down
+        // (which it does during the layout flurry triggered by a tab
+        // switch + the Shortcuts tab's `onAppear { refreshDetectedSources()
+        // }`). The GeometryReader inside the frame's background then
+        // reports that inflated height back to WindowManager and the
+        // window grows — a feedback loop that produced the
+        // vertical-screen-tall Shortcuts tab in 0.1.1.
+        //
+        // Putting `fixedSize` on the inside guarantees the view always
+        // takes its intrinsic height regardless of the proposal, so the
+        // GeometryReader can only ever report the real content height.
+        .fixedSize(horizontal: false, vertical: true)
+        .frame(maxWidth: .infinity, alignment: .top)
         .background(
             GeometryReader { geo in
                 Color.clear.preference(key: ContentHeightKey.self, value: geo.size.height)
             }
         )
-        .frame(maxWidth: .infinity, alignment: .top)
         .onPreferenceChange(ContentHeightKey.self) { height in
             guard height > 10 else { return }
             tabState.onContentHeight?(height)

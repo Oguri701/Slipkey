@@ -3,14 +3,16 @@ import XCTest
 
 @testable import SlipkeyApp
 
-/// Pins the two fixes for the v0.1.1 "Shortcuts tab makes the window
-/// vertical-screen-tall" bug:
+/// Pins the three pieces that together fix the "Settings window height
+/// goes wrong on tab switch" family of bugs:
 ///
-/// 1. `WindowManager.clampToScreen` refuses to propagate inflated heights.
-/// 2. `SettingsContent` measures the bare `Group`, not the outer
-///    `.frame(maxWidth: .infinity, alignment: .top)` layer. A regression to
-///    the old order would re-introduce the feedback loop, so we lock the
-///    relative order via a source-level grep.
+/// 1. `WindowManager.clampToScreen` refuses to propagate runaway heights.
+/// 2. `SettingsContent` uses `.fixedSize(horizontal: false, vertical: true)`
+///    so SwiftUI cannot propose a parent-sized height down through the
+///    alignment frame and create a feedback loop with GeometryReader.
+/// 3. `WindowManager.lastAppliedContentHeight` de-dups identical reports
+///    so a tab switch can't kick off two overlapping animations and snap
+///    instead of glide.
 @MainActor
 final class WindowSizingTests: XCTestCase {
     func test_clampToScreen_passes_normal_heights_through() {
@@ -33,11 +35,11 @@ final class WindowSizingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(WindowManager.clampToScreen(500), 200)
     }
 
-    func test_settings_content_measures_group_before_outer_frame() throws {
-        // SwiftUI lays modifiers bottom-up: whichever modifier appears first
-        // in source wraps the closest. The GeometryReader must therefore
-        // appear before `.frame(maxWidth: .infinity, alignment: .top)` so it
-        // measures the inner Group, not the outer alignment frame.
+    func test_settings_content_pins_vertical_size_via_fixedSize() throws {
+        // `.fixedSize(horizontal: false, vertical: true)` is what stops
+        // SwiftUI from proposing the NSHostingView's full height down to
+        // the alignment frame. If a future refactor drops it the
+        // Shortcuts-tab feedback loop comes back.
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // SlipkeyAppTests
             .deletingLastPathComponent() // Tests
@@ -45,19 +47,9 @@ final class WindowSizingTests: XCTestCase {
             .appendingPathComponent("Sources/SlipkeyApp/Views/SettingsView.swift")
         let src = try String(contentsOf: url, encoding: .utf8)
 
-        guard
-            let geometryRange = src.range(of: ".background("),
-            let frameRange = src.range(
-                of: ".frame(maxWidth: .infinity, alignment: .top)"
-            )
-        else {
-            XCTFail("expected both `.background(GeometryReader…)` and the outer alignment frame")
-            return
-        }
-
-        XCTAssertLessThan(
-            geometryRange.lowerBound, frameRange.lowerBound,
-            "GeometryReader must wrap the inner Group, not the outer alignment frame, or the Shortcuts-tab feedback loop comes back"
+        XCTAssertTrue(
+            src.contains(".fixedSize(horizontal: false, vertical: true)"),
+            "SettingsContent must pin its vertical size with .fixedSize so the GeometryReader can't measure an inflated frame"
         )
     }
 }

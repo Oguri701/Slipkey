@@ -11,6 +11,13 @@ final class WindowManager: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private var settingsWindow: NSWindow?
     private var languageObserver: AnyCancellable?
     private var isInitialDisplay = true
+    /// Last height we already animated to. SwiftUI may report the same
+    /// height several times per layout pass (especially on a tab switch
+    /// that fires `onAppear`); without de-duplication every report would
+    /// kick off a fresh `NSAnimationContext.runAnimationGroup`, cancel the
+    /// previous one mid-flight, and the user would see the window snap
+    /// instead of glide.
+    private var lastAppliedContentHeight: CGFloat = -1
 
     init(appState: AppState) {
         self.appState = appState
@@ -58,6 +65,11 @@ final class WindowManager: NSObject, NSWindowDelegate, NSToolbarDelegate {
             // grew every Shortcuts repaint), refuse to grow the window
             // beyond the visible screen area.
             let clamped = Self.clampToScreen(height)
+            // De-dup repeated reports of the same height so a tab switch
+            // can't kick off two overlapping animations and snap the
+            // window instead of gliding it.
+            if abs(clamped - self.lastAppliedContentHeight) < 1.0 { return }
+            self.lastAppliedContentHeight = clamped
             if self.isInitialDisplay {
                 self.isInitialDisplay = false
                 self.snapHeight(window: window, to: clamped)
@@ -145,6 +157,7 @@ final class WindowManager: NSObject, NSWindowDelegate, NSToolbarDelegate {
     func windowWillClose(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         isInitialDisplay = true
+        lastAppliedContentHeight = -1
     }
 }
 

@@ -1,0 +1,17 @@
+# Workspace-wide cargo settings.
+#
+# Only the Windows MSVC target gets a custom flag right now: link the C
+# runtime statically so the resulting `Slipkey.exe` doesn't depend on the
+# Microsoft Visual C++ Redistributable being installed on the user's PC.
+# Without this every fresh Windows machine without VC++ Redistributable
+# fails at startup with:
+#
+#     The code execution cannot proceed because VCRUNTIME140.dll
+#     was not found.
+#
+# Static CRT adds a few MB to the binary but removes the runtime
+# dependency entirely — the right trade-off for a small standalone tool
+# people will download and run from a zip.
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
