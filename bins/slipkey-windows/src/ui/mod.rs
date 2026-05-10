@@ -11,8 +11,6 @@ pub mod about;
 pub mod general;
 pub mod shortcuts;
 
-// ---- Win11 palette ---------------------------------------------------------
-
 pub const WIN11_BG: egui::Color32 = egui::Color32::from_rgb(243, 243, 243);
 pub const WIN11_SURFACE: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
 pub const WIN11_NAV: egui::Color32 = egui::Color32::from_rgb(242, 242, 242);
@@ -28,27 +26,14 @@ pub const WIN11_WARNING: egui::Color32 = egui::Color32::from_rgb(202, 80, 16);
 pub const WIN11_BTN: egui::Color32 = egui::Color32::from_rgb(251, 251, 251);
 pub const WIN11_BTN_HOVER: egui::Color32 = egui::Color32::from_rgb(239, 239, 239);
 pub const WIN11_BTN_ACTIVE: egui::Color32 = egui::Color32::from_rgb(225, 225, 225);
-pub const WIN11_CLOSE_HOVER: egui::Color32 = egui::Color32::from_rgb(196, 43, 28);
 
-// ---- Win11 type ramp -------------------------------------------------------
-//
-// Mirrors the Fluent / Win11 Settings type scale so every label in the app
-// lands on one of these five sizes. Anything that needs a different size is a
-// signal that the layout, not the type, should be reworked.
+pub const FONT_CAPTION: f32 = 11.0;
+pub const FONT_BODY: f32 = 12.5;
+pub const FONT_BODY_STRONG: f32 = 13.0;
+pub const FONT_SUBTITLE: f32 = 17.0;
+pub const FONT_TITLE: f32 = 24.0;
 
-/// Caption — secondary metadata, table headers, supporting text.
-pub const FONT_CAPTION: f32 = 12.0;
-/// Body — default UI text, control labels, table rows.
-pub const FONT_BODY: f32 = 14.0;
-/// BodyStrong — emphasized body (toggle titles, current section).
-pub const FONT_BODY_STRONG: f32 = 14.0;
-/// Subtitle — section titles inside a card.
-pub const FONT_SUBTITLE: f32 = 20.0;
-/// Title — page-level headlines (About).
-pub const FONT_TITLE: f32 = 28.0;
-
-const TITLE_BAR_HEIGHT: f32 = 40.0;
-const TITLE_BTN_W: f32 = 44.0;
+const CONTENT_MARGIN: f32 = 14.0;
 
 #[derive(PartialEq, Clone, Copy)]
 enum Tab {
@@ -64,9 +49,6 @@ pub struct SettingsWindow {
     tab: Tab,
     icon_texture: Option<egui::TextureHandle>,
     visible: bool,
-    /// Tray icon clicks queued by the global event handler. Drained on each
-    /// `update`. The handler also calls `ctx.request_repaint()` so we do not
-    /// need to poll for these events when the window is hidden.
     tray_events: Arc<Mutex<Vec<TrayIconEvent>>>,
     menu_events: Arc<Mutex<Vec<MenuEvent>>>,
 }
@@ -88,8 +70,6 @@ impl SettingsWindow {
             egui::TextureOptions::default(),
         );
 
-        // Take over the tray-icon and menu event handlers so we can wake egui
-        // exactly when an event arrives, instead of polling every frame.
         let tray_events: Arc<Mutex<Vec<TrayIconEvent>>> = Arc::new(Mutex::new(Vec::new()));
         let menu_events: Arc<Mutex<Vec<MenuEvent>>> = Arc::new(Mutex::new(Vec::new()));
 
@@ -148,24 +128,17 @@ impl eframe::App for SettingsWindow {
             }
         }
 
-        // No periodic repaint: the tray/menu handlers above call
-        // `request_repaint` exactly when they have work for us. When the
-        // window is hidden egui parks the main thread until the OS sends
-        // input or one of those handlers fires.
-
-        egui::TopBottomPanel::top("title_bar")
-            .exact_height(TITLE_BAR_HEIGHT)
-            .frame(egui::Frame::new().fill(WIN11_BG))
-            .show(ctx, |ui| {
-                title_bar(ui, ctx, &mut self.visible);
-            });
+        let ui_language = {
+            let state = self.state.lock().unwrap();
+            state.ui_language.clone()
+        };
 
         egui::SidePanel::left("navigation_view")
-            .exact_width(230.0)
+            .exact_width(160.0)
             .resizable(false)
             .frame(egui::Frame::new().fill(WIN11_NAV))
             .show(ctx, |ui| {
-                navigation_view(ui, &mut self.tab);
+                navigation_view(ui, &mut self.tab, &ui_language);
             });
 
         egui::CentralPanel::default()
@@ -180,119 +153,28 @@ impl eframe::App for SettingsWindow {
                     shortcuts::show(ui, &mut state, &self.hook);
                 }
                 Tab::About => {
-                    about::show(ui, self.icon_texture.as_ref());
+                    about::show(ui, self.icon_texture.as_ref(), &ui_language);
                 }
             });
     }
 }
 
 impl Tab {
-    fn title(self) -> &'static str {
+    fn title(self, language: &str) -> &'static str {
         match self {
-            Tab::General => "General",
-            Tab::Shortcuts => "Shortcuts",
-            Tab::About => "About",
-        }
-    }
-
-    fn icon(self) -> &'static str {
-        match self {
-            Tab::General => "☀",
-            Tab::Shortcuts => "⌨",
-            Tab::About => "ⓘ",
+            Tab::General => tr(language, "General"),
+            Tab::Shortcuts => tr(language, "Shortcuts"),
+            Tab::About => tr(language, "About"),
         }
     }
 }
 
-fn title_bar(ui: &mut egui::Ui, ctx: &egui::Context, visible: &mut bool) {
-    let full = ui.max_rect();
-    // Drag region stops at the start of the window controls (min + close).
-    let controls_w = TITLE_BTN_W * 2.0;
-    let drag_rect = egui::Rect::from_min_max(
-        full.min,
-        egui::pos2(full.max.x - controls_w, full.max.y),
-    );
-    let drag_response = ui.interact(drag_rect, ui.id().with("title_drag"), egui::Sense::drag());
-    if drag_response.drag_started() {
-        ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
-    }
-
-    ui.horizontal(|ui| {
-        ui.add_space(16.0);
-        ui.allocate_ui_with_layout(
-            egui::vec2(full.width() - controls_w - 16.0, TITLE_BAR_HEIGHT),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.label(
-                    egui::RichText::new("Slipkey")
-                        .size(FONT_BODY_STRONG)
-                        .strong()
-                        .color(WIN11_TEXT),
-                );
-            },
-        );
-
-        title_button(ui, "\u{2013}", TitleHover::neutral(), || {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Minimized(true));
-        });
-        title_button(ui, "\u{2715}", TitleHover::close(), || {
-            *visible = false;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-        });
-    });
-
-    ui.painter().hline(
-        full.min.x..=full.max.x,
-        full.max.y,
-        egui::Stroke::new(1.0, WIN11_SEPARATOR),
-    );
-}
-
-#[derive(Clone, Copy)]
-struct TitleHover {
-    bg: egui::Color32,
-    fg: egui::Color32,
-}
-
-impl TitleHover {
-    fn neutral() -> Self {
-        Self { bg: WIN11_BTN_HOVER, fg: WIN11_TEXT }
-    }
-    fn close() -> Self {
-        Self { bg: WIN11_CLOSE_HOVER, fg: egui::Color32::WHITE }
-    }
-}
-
-fn title_button(ui: &mut egui::Ui, glyph: &str, hover: TitleHover, action: impl FnOnce()) {
-    let (rect, response) =
-        ui.allocate_exact_size(egui::vec2(TITLE_BTN_W, TITLE_BAR_HEIGHT), egui::Sense::click());
-
-    let (bg, fg) = if response.hovered() {
-        (hover.bg, hover.fg)
-    } else {
-        (egui::Color32::TRANSPARENT, WIN11_TEXT_SEC)
-    };
-
-    ui.painter().rect_filled(rect, 0.0, bg);
-    ui.painter().text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        glyph,
-        egui::FontId::proportional(12.0),
-        fg,
-    );
-
-    if response.clicked() {
-        action();
-    }
-}
-
-fn navigation_view(ui: &mut egui::Ui, current_tab: &mut Tab) {
+fn navigation_view(ui: &mut egui::Ui, current_tab: &mut Tab, language: &str) {
     ui.set_width(ui.available_width());
-    ui.add_space(20.0);
+    ui.add_space(16.0);
 
     for tab in [Tab::General, Tab::Shortcuts, Tab::About] {
-        nav_item(ui, current_tab, tab);
+        nav_item(ui, current_tab, tab, language);
         ui.add_space(4.0);
     }
 
@@ -304,8 +186,8 @@ fn navigation_view(ui: &mut egui::Ui, current_tab: &mut Tab) {
     );
 }
 
-fn nav_item(ui: &mut egui::Ui, current_tab: &mut Tab, tab: Tab) {
-    const NAV_H: f32 = 40.0;
+fn nav_item(ui: &mut egui::Ui, current_tab: &mut Tab, tab: Tab, language: &str) {
+    const NAV_H: f32 = 36.0;
     const NAV_MARGIN_X: f32 = 8.0;
     const RAIL_W: f32 = 3.0;
 
@@ -337,20 +219,57 @@ fn nav_item(ui: &mut egui::Ui, current_tab: &mut Tab, tab: Tab) {
     }
 
     let text_color = if is_active { WIN11_ACCENT } else { WIN11_TEXT };
+    nav_icon(ui, tab, rect, text_color);
     ui.painter().text(
-        egui::pos2(rect.min.x + 16.0, rect.center().y),
-        egui::Align2::CENTER_CENTER,
-        tab.icon(),
-        egui::FontId::proportional(16.0),
-        text_color,
-    );
-    ui.painter().text(
-        egui::pos2(rect.min.x + 36.0, rect.center().y),
+        egui::pos2(rect.min.x + 34.0, rect.center().y),
         egui::Align2::LEFT_CENTER,
-        tab.title(),
+        tab.title(language),
         egui::FontId::proportional(FONT_BODY),
         text_color,
     );
+}
+
+fn nav_icon(ui: &mut egui::Ui, tab: Tab, rect: egui::Rect, color: egui::Color32) {
+    let center = egui::pos2(rect.min.x + 15.0, rect.center().y);
+    match tab {
+        Tab::General => {
+            ui.painter().circle_filled(center, 3.5, color);
+            for i in 0..8 {
+                let angle = i as f32 * std::f32::consts::TAU / 8.0;
+                let dir = egui::vec2(angle.cos(), angle.sin());
+                ui.painter().line_segment(
+                    [center + dir * 6.5, center + dir * 9.0],
+                    egui::Stroke::new(1.25, color),
+                );
+            }
+        }
+        Tab::Shortcuts => {
+            let body = egui::Rect::from_center_size(center, egui::vec2(18.0, 11.0));
+            ui.painter().rect_stroke(
+                body,
+                2.0,
+                egui::Stroke::new(1.25, color),
+                egui::epaint::StrokeKind::Inside,
+            );
+            for row in 0..2 {
+                for col in 0..4 {
+                    let x = body.min.x + 4.0 + col as f32 * 4.0;
+                    let y = body.min.y + 4.0 + row as f32 * 4.0;
+                    ui.painter().circle_filled(egui::pos2(x, y), 0.8, color);
+                }
+            }
+        }
+        Tab::About => {
+            ui.painter().circle_stroke(center, 7.5, egui::Stroke::new(1.25, color));
+            ui.painter().text(
+                center,
+                egui::Align2::CENTER_CENTER,
+                "i",
+                egui::FontId::proportional(12.0),
+                color,
+            );
+        }
+    }
 }
 
 pub fn win11_card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
@@ -358,26 +277,32 @@ pub fn win11_card(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
         .fill(WIN11_SURFACE)
         .stroke(egui::Stroke::new(1.0, WIN11_BORDER))
         .corner_radius(8.0)
-        .inner_margin(egui::Margin::symmetric(16, 14))
+        .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
-            ui.set_width(ui.available_width());
+            ui.set_min_width(ui.available_width());
+            ui.set_max_width(ui.available_width());
             add_contents(ui);
         });
 }
 
 pub fn preference_content(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui)) {
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        ui.add_space(20.0);
-        ui.horizontal(|ui| {
-            ui.add_space(20.0);
-            ui.vertical(|ui| {
-                ui.set_width(ui.available_width() - 40.0);
-                add_contents(ui);
+    egui::ScrollArea::vertical()
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            ui.add_space(CONTENT_MARGIN);
+
+            egui::Frame::default()
+                .inner_margin(egui::Margin::symmetric(CONTENT_MARGIN as i8, 0))
+                .show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        ui.set_min_width(ui.available_width());
+                        ui.set_max_width(ui.available_width());
+                        add_contents(ui);
+                    });
             });
-            ui.add_space(20.0);
+
+            ui.add_space(CONTENT_MARGIN);
         });
-        ui.add_space(20.0);
-    });
 }
 
 pub fn section_title(ui: &mut egui::Ui, label: &str) {
@@ -386,40 +311,134 @@ pub fn section_title(ui: &mut egui::Ui, label: &str) {
             .size(FONT_SUBTITLE)
             .color(WIN11_TEXT),
     );
-    ui.add_space(8.0);
+    ui.add_space(6.0);
 }
 
 pub fn caption(ui: &mut egui::Ui, label: &str) {
-    ui.label(
-        egui::RichText::new(label)
-            .size(FONT_CAPTION)
-            .color(WIN11_TEXT_SEC),
+    ui.add(
+        egui::Label::new(
+            egui::RichText::new(label)
+                .size(FONT_CAPTION)
+                .color(WIN11_TEXT_SEC),
+        )
+        .wrap(),
     );
+}
+
+pub fn tr(language: &str, key: &'static str) -> &'static str {
+    match language {
+        "zh" => match key {
+            "General" => "\u{901A}\u{7528}",
+            "Shortcuts" => "\u{5FEB}\u{6377}\u{952E}",
+            "About" => "\u{5173}\u{4E8E}",
+            "Startup" => "\u{542F}\u{52A8}",
+            "Open at startup" => "\u{5F00}\u{673A}\u{542F}\u{52A8}",
+            "Start Slipkey automatically after sign-in." => "\u{767B}\u{5F55}\u{540E}\u{81EA}\u{52A8}\u{542F}\u{52A8} Slipkey\u{3002}",
+            "Language" => "\u{8BED}\u{8A00}",
+            "Display language" => "\u{663E}\u{793A}\u{8BED}\u{8A00}",
+            "Permissions" => "\u{6743}\u{9650}",
+            "Accessibility" => "\u{8F85}\u{52A9}\u{529F}\u{80FD}",
+            "Ready" => "\u{5DF2}\u{5C31}\u{7EEA}",
+            "Inactive" => "\u{672A}\u{542F}\u{7528}",
+            "Required to intercept the leader key before the active IME consumes it." => "\u{7528}\u{4E8E}\u{5728}\u{5F53}\u{524D}\u{8F93}\u{5165}\u{6CD5}\u{5904}\u{7406}\u{524D}\u{62E6}\u{622A}\u{5F15}\u{5BFC}\u{952E}\u{3002}",
+            "Leader key" => "\u{5F15}\u{5BFC}\u{952E}",
+            "Type this first, then a prefix such as ;en. Pick a rarely used key to avoid accidental triggers." => "\u{5148}\u{8F93}\u{5165}\u{5B83}\u{FF0C}\u{518D}\u{8F93}\u{5165}\u{5982} ;en \u{7684}\u{524D}\u{7F00}\u{3002}\u{5EFA}\u{8BAE}\u{9009}\u{62E9}\u{5C11}\u{7528}\u{952E}\u{4EE5}\u{907F}\u{514D}\u{8BEF}\u{89E6}\u{53D1}\u{3002}",
+            "Input sources" => "\u{8F93}\u{5165}\u{6E90}",
+            "LanguageHeader" => "\u{8BED}\u{8A00}",
+            "Prefix" => "\u{524D}\u{7F00}",
+            "Detect" => "\u{68C0}\u{6D4B}",
+            "Reset to defaults" => "\u{6062}\u{590D}\u{9ED8}\u{8BA4}",
+            "Save" => "\u{4FDD}\u{5B58}",
+            "Switch input methods by typing." => "\u{901A}\u{8FC7}\u{952E}\u{5165}\u{6765}\u{5207}\u{6362}\u{8F93}\u{5165}\u{6CD5}\u{3002}",
+            "View on GitHub" => "\u{5728} GitHub \u{4E0A}\u{67E5}\u{770B}",
+            _ => key,
+        },
+        "ja" => match key {
+            "General" => "\u{4E00}\u{822C}",
+            "Shortcuts" => "\u{30B7}\u{30E7}\u{30FC}\u{30C8}\u{30AB}\u{30C3}\u{30C8}",
+            "About" => "\u{60C5}\u{5831}",
+            "Startup" => "\u{8D77}\u{52D5}",
+            "Open at startup" => "\u{8D77}\u{52D5}\u{6642}\u{306B}\u{958B}\u{304F}",
+            "Start Slipkey automatically after sign-in." => "\u{30B5}\u{30A4}\u{30F3}\u{30A4}\u{30F3}\u{5F8C}\u{306B} Slipkey \u{3092}\u{81EA}\u{52D5}\u{8D77}\u{52D5}\u{3057}\u{307E}\u{3059}\u{3002}",
+            "Language" => "\u{8A00}\u{8A9E}",
+            "Display language" => "\u{8868}\u{793A}\u{8A00}\u{8A9E}",
+            "Permissions" => "\u{6A29}\u{9650}",
+            "Accessibility" => "\u{30A2}\u{30AF}\u{30BB}\u{30B7}\u{30D3}\u{30EA}\u{30C6}\u{30A3}",
+            "Ready" => "\u{6E96}\u{5099}\u{5B8C}\u{4E86}",
+            "Inactive" => "\u{7121}\u{52B9}",
+            "Required to intercept the leader key before the active IME consumes it." => "\u{73FE}\u{5728}\u{306E} IME \u{304C}\u{51E6}\u{7406}\u{3059}\u{308B}\u{524D}\u{306B}\u{30EA}\u{30FC}\u{30C0}\u{30FC}\u{30AD}\u{30FC}\u{3092}\u{6355}\u{6349}\u{3059}\u{308B}\u{305F}\u{3081}\u{306B}\u{5FC5}\u{8981}\u{3067}\u{3059}\u{3002}",
+            "Leader key" => "\u{30EA}\u{30FC}\u{30C0}\u{30FC}\u{30AD}\u{30FC}",
+            "Type this first, then a prefix such as ;en. Pick a rarely used key to avoid accidental triggers." => "\u{5148}\u{306B}\u{3053}\u{308C}\u{3092}\u{5165}\u{529B}\u{3057}\u{3001}\u{6B21}\u{306B} ;en \u{306E}\u{3088}\u{3046}\u{306A}\u{30D7}\u{30EC}\u{30D5}\u{30A3}\u{30C3}\u{30AF}\u{30B9}\u{3092}\u{5165}\u{529B}\u{3057}\u{307E}\u{3059}\u{3002}",
+            "Input sources" => "\u{5165}\u{529B}\u{30BD}\u{30FC}\u{30B9}",
+            "LanguageHeader" => "\u{8A00}\u{8A9E}",
+            "Prefix" => "\u{30D7}\u{30EC}\u{30D5}\u{30A3}\u{30C3}\u{30AF}\u{30B9}",
+            "Detect" => "\u{691C}\u{51FA}",
+            "Reset to defaults" => "\u{65E2}\u{5B9A}\u{5024}\u{306B}\u{623B}\u{3059}",
+            "Save" => "\u{4FDD}\u{5B58}",
+            "Switch input methods by typing." => "\u{5165}\u{529B}\u{3057}\u{3066}\u{5165}\u{529B}\u{65B9}\u{5F0F}\u{3092}\u{5207}\u{308A}\u{66FF}\u{3048}\u{307E}\u{3059}\u{3002}",
+            "View on GitHub" => "GitHub \u{3067}\u{898B}\u{308B}",
+            _ => key,
+        },
+        _ => key,
+    }
+}
+
+pub fn language_label(language: &str) -> &'static str {
+    match language {
+        "zh" => "\u{4E2D}\u{6587}",
+        "ja" => "\u{65E5}\u{672C}\u{8A9E}",
+        _ => "English",
+    }
+}
+
+pub fn mapping_language_label(language: &str) -> String {
+    match language {
+        "zh" => "\u{4E2D}\u{6587}".to_string(),
+        "ja" => "\u{65E5}\u{672C}\u{8A9E}".to_string(),
+        "en" => "English".to_string(),
+        other => other.to_string(),
+    }
 }
 
 fn apply_win11_style(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
-    for path in &[
-        "C:\\Windows\\Fonts\\SegoeUIVariable.ttf",
-        "C:\\Windows\\Fonts\\segoeui.ttf",
-    ] {
-        if let Ok(bytes) = std::fs::read(path) {
-            fonts.font_data.insert(
-                "segoe_ui".to_owned(),
-                egui::FontData::from_owned(bytes).into(),
-            );
-            fonts
-                .families
-                .entry(egui::FontFamily::Proportional)
-                .or_default()
-                .insert(0, "segoe_ui".to_owned());
-            break;
-        }
-    }
+
+    register_font(
+        &mut fonts,
+        "segoe_ui",
+        &[
+            "C:\\Windows\\Fonts\\SegoeUIVariable.ttf",
+            "C:\\Windows\\Fonts\\segoeui.ttf",
+        ],
+        true,
+    );
+    register_font(
+        &mut fonts,
+        "microsoft_yahei",
+        &[
+            "C:\\Windows\\Fonts\\msyh.ttc",
+            "C:\\Windows\\Fonts\\msyh.ttf",
+        ],
+        false,
+    );
+    register_font(
+        &mut fonts,
+        "yu_gothic",
+        &[
+            "C:\\Windows\\Fonts\\YuGothM.ttc",
+            "C:\\Windows\\Fonts\\YuGothR.ttc",
+        ],
+        false,
+    );
+    register_font(
+        &mut fonts,
+        "meiryo",
+        &["C:\\Windows\\Fonts\\meiryo.ttc"],
+        false,
+    );
     ctx.set_fonts(fonts);
 
     let mut style = (*ctx.style()).clone();
-
     style.visuals.window_fill = WIN11_SURFACE;
     style.visuals.panel_fill = WIN11_BG;
     style.visuals.window_stroke = egui::Stroke::NONE;
@@ -448,24 +467,54 @@ fn apply_win11_style(ctx: &egui::Context) {
     style.visuals.widgets.open.bg_stroke = egui::Stroke::new(1.0, WIN11_ACCENT);
     style.visuals.widgets.open.fg_stroke = egui::Stroke::new(1.0, WIN11_TEXT);
 
-    // Default text style: body 14pt. Sections / captions opt in via RichText.
     use egui::TextStyle;
-    style.text_styles.insert(
-        TextStyle::Body,
-        egui::FontId::proportional(FONT_BODY),
-    );
-    style.text_styles.insert(
-        TextStyle::Button,
-        egui::FontId::proportional(FONT_BODY),
-    );
-    style.text_styles.insert(
-        TextStyle::Small,
-        egui::FontId::proportional(FONT_CAPTION),
-    );
+    style
+        .text_styles
+        .insert(TextStyle::Body, egui::FontId::proportional(FONT_BODY));
+    style
+        .text_styles
+        .insert(TextStyle::Button, egui::FontId::proportional(FONT_BODY));
+    style
+        .text_styles
+        .insert(TextStyle::Small, egui::FontId::proportional(FONT_CAPTION));
 
     style.spacing.item_spacing = egui::vec2(8.0, 6.0);
     style.spacing.button_padding = egui::vec2(12.0, 6.0);
     style.spacing.menu_margin = egui::Margin::same(4);
 
     ctx.set_style(style);
+}
+
+fn register_font(
+    fonts: &mut egui::FontDefinitions,
+    name: &str,
+    paths: &[&str],
+    primary: bool,
+) {
+    for path in paths {
+        if let Ok(bytes) = std::fs::read(path) {
+            fonts
+                .font_data
+                .insert(name.to_owned(), egui::FontData::from_owned(bytes).into());
+
+            let proportional = fonts
+                .families
+                .entry(egui::FontFamily::Proportional)
+                .or_default();
+            if primary {
+                proportional.insert(0, name.to_owned());
+            } else if !proportional.iter().any(|font| font == name) {
+                proportional.push(name.to_owned());
+            }
+
+            let monospace = fonts
+                .families
+                .entry(egui::FontFamily::Monospace)
+                .or_default();
+            if !monospace.iter().any(|font| font == name) {
+                monospace.push(name.to_owned());
+            }
+            break;
+        }
+    }
 }

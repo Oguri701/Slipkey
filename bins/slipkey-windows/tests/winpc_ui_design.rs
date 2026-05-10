@@ -1,7 +1,7 @@
 //! Pin the Settings window's high-level visual contract: a left NavigationView
-//! sidebar, a self-drawn (decoration-less) title bar, and the Win11 Fluent
-//! type ramp. Tests guard against silent regressions like the old top tab bar
-//! or hard-coded one-off font sizes creeping back in.
+//! sidebar, native WinPC window chrome, and the Win11 Fluent type ramp. Tests
+//! guard against silent regressions like the old top tab bar or hard-coded
+//! one-off font sizes creeping back in.
 
 use std::fs;
 use std::path::Path;
@@ -17,20 +17,20 @@ fn settings_window_uses_sample_navigation_layout() {
     let ui_rs = read_source("src/ui/mod.rs");
 
     assert!(
-        main_rs.contains(".with_inner_size([560.0, 520.0])"),
-        "WinPC settings window should keep the compact NavigationView proportions"
+        main_rs.contains(".with_inner_size([480.0, 380.0])"),
+        "WinPC settings window should keep compact settings-panel proportions"
     );
     assert!(
-        main_rs.contains(".with_decorations(false)"),
-        "WinPC settings should draw the sample-like title bar itself"
+        main_rs.contains(".with_decorations(true)"),
+        "WinPC settings should use native window chrome for rounded corners and frame"
     );
     assert!(
         ui_rs.contains("SidePanel::left(\"navigation_view\")"),
         "WinPC settings should use a left NavigationView-style sidebar"
     );
     assert!(
-        ui_rs.contains(".exact_width(230.0)"),
-        "WinPC settings should use the wide left navigation rail from the sample"
+        ui_rs.contains(".exact_width(160.0)"),
+        "WinPC settings should keep the navigation rail narrow enough for a compact panel"
     );
     assert!(
         !ui_rs.contains("TopBottomPanel::top(\"tab_bar\")"),
@@ -65,13 +65,13 @@ fn general_tab_does_not_carry_dead_controls() {
         "the no-op `Show menu bar icon` toggle should stay removed"
     );
     assert!(
-        !general_rs.contains("general_language"),
-        "the English-only Language picker should stay removed"
+        general_rs.contains("general_language"),
+        "the Language picker should stay present and backed by real UI state"
     );
 }
 
 #[test]
-fn title_bar_drops_the_useless_maximize_button() {
+fn settings_window_uses_native_title_bar() {
     let ui_rs = read_source("src/ui/mod.rs");
 
     assert!(
@@ -79,7 +79,21 @@ fn title_bar_drops_the_useless_maximize_button() {
         "the Settings window is fixed-size, so the maximize button should stay removed"
     );
     assert!(
-        ui_rs.contains("WIN11_CLOSE_HOVER"),
-        "the close button should hover to the Win11 red, not stay grey"
+        !ui_rs.contains("TopBottomPanel::top(\"title_bar\")"),
+        "WinPC settings should not duplicate the native title bar"
+    );
+}
+
+#[test]
+fn shortcuts_table_keeps_sources_internal() {
+    let shortcuts_rs = read_source("src/ui/shortcuts.rs");
+
+    assert!(
+        !shortcuts_rs.contains("table_header(ui, \"Source\""),
+        "Shortcuts should not expose a Source column in the compact WinPC table"
+    );
+    assert!(
+        shortcuts_rs.contains("mapping_language_label"),
+        "Shortcuts should mirror the macOS language labels through the shared label helper"
     );
 }

@@ -24,9 +24,11 @@ fn main() {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Slipkey")
-            .with_inner_size([560.0, 520.0])
+            .with_inner_size([480.0, 380.0])
+            .with_min_inner_size([480.0, 380.0])
+            .with_max_inner_size([480.0, 380.0])
             .with_resizable(false)
-            .with_decorations(false)
+            .with_decorations(true)
             .with_visible(false)
             .with_icon(egui::IconData {
                 rgba: icon_rgba.clone(),

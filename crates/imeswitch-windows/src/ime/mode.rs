@@ -14,7 +14,7 @@ use windows_sys::Win32::UI::Input::Ime::{
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
     GetKeyboardLayout, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-    KEYEVENTF_SCANCODE, VK_DBE_ALPHANUMERIC, VK_DBE_HIRAGANA, VK_NONCONVERT,
+    VK_DBE_ALPHANUMERIC, VK_DBE_HIRAGANA,
 };
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::UI::WindowsAndMessaging::{
@@ -25,7 +25,6 @@ const IME_CMODE_ALPHANUMERIC: u32 = 0x0000;
 const IME_CMODE_NATIVE: u32 = 0x0001;
 const IME_CMODE_FULLSHAPE: u32 = 0x0008;
 const IME_CMODE_ROMAN: u32 = 0x0010;
-const SCANCODE_CAPSLOCK_EISU: u16 = 0x3a;
 
 // Must match hook.rs so the hook ignores our simulated DBE keys.
 const REPLAY_MAGIC: usize = 0x696d_6573_7769_6e36;
@@ -70,10 +69,14 @@ pub fn set_ime_alphanumeric_mode(hwnd: windows_sys::Win32::Foundation::HWND) {
         window_ok
     );
     if language.as_deref() == Some("ja") {
-        send_scan_code(SCANCODE_CAPSLOCK_EISU);
-        std::thread::sleep(std::time::Duration::from_millis(10));
-        send_virtual_key(VK_NONCONVERT);
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        // Avoid physical CapsLock/Eisu scan codes and VK_NONCONVERT here.
+        // CapsLock/Eisu opens the real Caps Lock on non-Japanese keyboards,
+        // while VK_NONCONVERT can cycle Microsoft Japanese IME back to Hiragana
+        // on some regional Windows installs. DBE_ALPHANUMERIC is the absolute
+        // logical command; repeat it after a short TSF settle delay because some
+        // apps briefly restore the previous IME mode after IMM32 returns.
+        send_virtual_key(VK_DBE_ALPHANUMERIC);
+        std::thread::sleep(std::time::Duration::from_millis(30));
     }
     send_virtual_key(VK_DBE_ALPHANUMERIC);
 }
@@ -200,17 +203,6 @@ fn send_virtual_key(vk: u16) {
 }
 
 #[cfg(target_os = "windows")]
-fn send_scan_code(scan_code: u16) {
-    let mut inputs = [
-        scan_code_input(scan_code, KEYEVENTF_SCANCODE),
-        scan_code_input(scan_code, KEYEVENTF_SCANCODE | KEYEVENTF_KEYUP),
-    ];
-    unsafe {
-        SendInput(2, inputs.as_mut_ptr(), std::mem::size_of::<INPUT>() as i32);
-    }
-}
-
-#[cfg(target_os = "windows")]
 fn dbe_input(vk: u16, flags: u32) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
@@ -218,22 +210,6 @@ fn dbe_input(vk: u16, flags: u32) -> INPUT {
             ki: KEYBDINPUT {
                 wVk: vk,
                 wScan: 0,
-                dwFlags: flags,
-                time: 0,
-                dwExtraInfo: REPLAY_MAGIC,
-            },
-        },
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn scan_code_input(scan_code: u16, flags: u32) -> INPUT {
-    INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: 0,
-                wScan: scan_code,
                 dwFlags: flags,
                 time: 0,
                 dwExtraInfo: REPLAY_MAGIC,

@@ -9,6 +9,7 @@ pub struct AppState {
     pub status_message: String,
     pub hook_active: bool,
     pub launch_at_login: bool,
+    pub ui_language: String,
 }
 
 impl AppState {
@@ -22,6 +23,7 @@ impl AppState {
             status_message: String::new(),
             hook_active: false,
             launch_at_login: crate::startup::is_enabled(),
+            ui_language: "en".to_string(),
         }
     }
 }
@@ -38,6 +40,7 @@ pub fn merge_detected_sources(mut config: Config, sources: &[SourceInfo]) -> Con
         .mappings
         .take()
         .unwrap_or_else(|| Config::default().mappings.unwrap_or_default());
+    let defaults = Config::default().mappings.unwrap_or_default();
 
     let mut detected_languages: Vec<String> = sources
         .iter()
@@ -47,30 +50,24 @@ pub fn merge_detected_sources(mut config: Config, sources: &[SourceInfo]) -> Con
     detected_languages.sort();
     detected_languages.dedup();
 
-    let existing_en = existing.iter().find(|entry| entry.language == "en");
-    let mut rows = vec![MappingConfig {
-        language: "en".to_string(),
-        prefix: existing_en
-            .map(|entry| entry.prefix.clone())
-            .unwrap_or_else(|| "en".to_string()),
-        source: None,
-    }];
+    let mut rows = Vec::new();
 
-    for language in &detected_languages {
+    for language in ["en", "ja", "zh"] {
         let candidates: Vec<&SourceInfo> = sources
             .iter()
-            .filter(|source| &source.language == language)
+            .filter(|source| source.language == language)
             .collect();
         let selected = existing
             .iter()
             .find(|entry| {
-                &entry.language == language
+                entry.language == language
                     && entry
                         .source
                         .as_deref()
                         .map_or(false, |id| candidates.iter().any(|source| source.id == id))
             })
-            .or_else(|| existing.iter().find(|entry| &entry.language == language));
+            .or_else(|| existing.iter().find(|entry| entry.language == language))
+            .or_else(|| defaults.iter().find(|entry| entry.language == language));
 
         let source = selected
             .filter(|entry| {
@@ -83,17 +80,40 @@ pub fn merge_detected_sources(mut config: Config, sources: &[SourceInfo]) -> Con
             .or_else(|| selected.and_then(|entry| entry.source.clone()));
 
         rows.push(MappingConfig {
+            language: language.to_string(),
+            prefix: selected
+                .map(|entry| entry.prefix.clone())
+                .unwrap_or_else(|| language.to_ascii_lowercase()),
+            source: if language == "en" { None } else { source },
+        });
+    }
+
+    for language in detected_languages
+        .iter()
+        .filter(|language| !matches!(language.as_str(), "ja" | "zh"))
+    {
+        let candidates: Vec<&SourceInfo> = sources
+            .iter()
+            .filter(|source| source.language == *language)
+            .collect();
+        let selected = existing.iter().find(|entry| entry.language == *language);
+        rows.push(MappingConfig {
             language: language.clone(),
             prefix: selected
                 .map(|entry| entry.prefix.clone())
                 .unwrap_or_else(|| language.to_ascii_lowercase()),
-            source,
+            source: selected
+                .and_then(|entry| entry.source.clone())
+                .or_else(|| candidates.first().map(|source| source.id.clone())),
         });
     }
 
     for entry in existing
         .iter()
-        .filter(|entry| entry.language != "en" && !detected_languages.contains(&entry.language))
+        .filter(|entry| {
+            !matches!(entry.language.as_str(), "en" | "ja" | "zh")
+                && !detected_languages.contains(&entry.language)
+        })
     {
         rows.push(entry.clone());
     }

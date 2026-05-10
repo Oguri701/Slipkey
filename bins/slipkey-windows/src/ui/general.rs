@@ -1,25 +1,20 @@
 use eframe::egui;
 
 use super::{
-    FONT_BODY, FONT_BODY_STRONG, FONT_CAPTION, WIN11_ACCENT, WIN11_SUCCESS, WIN11_TEXT,
-    WIN11_TEXT_SEC, WIN11_WARNING,
+    language_label, tr, FONT_BODY, FONT_BODY_STRONG, FONT_CAPTION, WIN11_ACCENT, WIN11_SUCCESS,
+    WIN11_TEXT, WIN11_TEXT_SEC, WIN11_WARNING,
 };
 use crate::app::AppState;
 
-/// Renders the General tab.
-///
-/// Kept intentionally short: two cards (Startup, Permissions). Earlier
-/// iterations had a tray-icon visibility toggle that was wired to a no-op,
-/// and a Language picker hard-coded to English; both were removed because a
-/// dead control reads worse than no control at all.
 pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
+    let lang = state.ui_language.clone();
     super::preference_content(ui, |ui| {
         super::win11_card(ui, |ui| {
-            super::section_title(ui, "Startup");
+            super::section_title(ui, tr(&lang, "Startup"));
             setting_toggle(
                 ui,
-                "Open at startup",
-                "Start Slipkey automatically after sign-in.",
+                tr(&lang, "Open at startup"),
+                tr(&lang, "Start Slipkey automatically after sign-in."),
                 state.launch_at_login,
                 |launch| match crate::startup::set_enabled(launch) {
                     Ok(()) => state.launch_at_login = launch,
@@ -28,17 +23,45 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
             );
         });
 
-        ui.add_space(12.0);
+        ui.add_space(8.0);
 
         super::win11_card(ui, |ui| {
-            super::section_title(ui, "Permissions");
-            permission_row(ui, state.hook_active);
+            super::section_title(ui, tr(&lang, "Language"));
+            language_picker(ui, tr(&lang, "Display language"), &mut state.ui_language);
+        });
+
+        ui.add_space(8.0);
+
+        super::win11_card(ui, |ui| {
+            super::section_title(ui, tr(&lang, "Permissions"));
+            permission_row(ui, &lang, state.hook_active);
         });
 
         if !state.status_message.is_empty() {
             ui.add_space(8.0);
             super::caption(ui, &state.status_message);
         }
+    });
+}
+
+fn language_picker(ui: &mut egui::Ui, title: &str, ui_language: &mut String) {
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new(title)
+                .size(FONT_BODY_STRONG)
+                .strong()
+                .color(WIN11_TEXT),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            egui::ComboBox::from_id_salt("general_language")
+                .width(128.0)
+                .selected_text(language_label(ui_language))
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(ui_language, "en".to_string(), "English");
+                    ui.selectable_value(ui_language, "zh".to_string(), language_label("zh"));
+                    ui.selectable_value(ui_language, "ja".to_string(), language_label("ja"));
+                });
+        });
     });
 }
 
@@ -51,7 +74,7 @@ fn setting_toggle(
 ) {
     ui.horizontal(|ui| {
         ui.vertical(|ui| {
-            ui.set_width(ui.available_width() - 60.0);
+            ui.set_width((ui.available_width() - 60.0).max(120.0));
             ui.label(
                 egui::RichText::new(title)
                     .size(FONT_BODY_STRONG)
@@ -59,10 +82,13 @@ fn setting_toggle(
                     .color(WIN11_TEXT),
             );
             ui.add_space(2.0);
-            ui.label(
-                egui::RichText::new(description)
-                    .size(FONT_CAPTION)
-                    .color(WIN11_TEXT_SEC),
+            ui.add(
+                egui::Label::new(
+                    egui::RichText::new(description)
+                        .size(FONT_CAPTION)
+                        .color(WIN11_TEXT_SEC),
+                )
+                .wrap(),
             );
         });
 
@@ -73,8 +99,6 @@ fn setting_toggle(
     });
 }
 
-/// Win11-style toggle switch. 40×20 with a 16px knob — same proportions
-/// Settings.exe uses for its inline switches.
 fn switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
     let (rect, mut response) = ui.allocate_exact_size(egui::vec2(40.0, 20.0), egui::Sense::click());
     if response.clicked() {
@@ -96,7 +120,8 @@ fn switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
         },
     );
     ui.painter().rect_filled(rect, 10.0, fill);
-    ui.painter().rect_stroke(rect, 10.0, stroke, egui::epaint::StrokeKind::Outside);
+    ui.painter()
+        .rect_stroke(rect, 10.0, stroke, egui::epaint::StrokeKind::Outside);
 
     let knob_radius = if *value { 6.0 } else { 5.0 };
     let knob_x = if *value {
@@ -115,13 +140,11 @@ fn switch(ui: &mut egui::Ui, value: &mut bool) -> egui::Response {
     response
 }
 
-/// Permission status block: a colored dot, the state label, and a one-line
-/// caption explaining why we need it.
-fn permission_row(ui: &mut egui::Ui, hook_active: bool) {
+fn permission_row(ui: &mut egui::Ui, lang: &str, hook_active: bool) {
     let (color, label) = if hook_active {
-        (WIN11_SUCCESS, "Ready")
+        (WIN11_SUCCESS, tr(lang, "Ready"))
     } else {
-        (WIN11_WARNING, "Inactive")
+        (WIN11_WARNING, tr(lang, "Inactive"))
     };
 
     ui.horizontal(|ui| {
@@ -132,22 +155,20 @@ fn permission_row(ui: &mut egui::Ui, hook_active: bool) {
         ui.vertical(|ui| {
             ui.horizontal(|ui| {
                 ui.label(
-                    egui::RichText::new("Accessibility")
+                    egui::RichText::new(tr(lang, "Accessibility"))
                         .size(FONT_BODY_STRONG)
                         .strong()
                         .color(WIN11_TEXT),
                 );
-                ui.label(
-                    egui::RichText::new(label)
-                        .size(FONT_BODY)
-                        .color(color),
-                );
+                ui.label(egui::RichText::new(label).size(FONT_BODY).color(color));
             });
             ui.add_space(2.0);
-            ui.label(
-                egui::RichText::new("Required to intercept the leader key before the active IME consumes it.")
-                    .size(FONT_CAPTION)
-                    .color(WIN11_TEXT_SEC),
+            super::caption(
+                ui,
+                tr(
+                    lang,
+                    "Required to intercept the leader key before the active IME consumes it.",
+                ),
             );
         });
     });

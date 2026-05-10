@@ -1,8 +1,8 @@
 use eframe::egui;
 
-use super::{FONT_BODY, FONT_CAPTION, FONT_TITLE, WIN11_ACCENT, WIN11_TEXT, WIN11_TEXT_SEC};
+use super::{tr, FONT_BODY, FONT_CAPTION, FONT_TITLE, WIN11_ACCENT, WIN11_TEXT, WIN11_TEXT_SEC};
 
-pub fn show(ui: &mut egui::Ui, icon: Option<&egui::TextureHandle>) {
+pub fn show(ui: &mut egui::Ui, icon: Option<&egui::TextureHandle>, lang: &str) {
     super::preference_content(ui, |ui| {
         super::win11_card(ui, |ui| {
             ui.horizontal(|ui| {
@@ -18,15 +18,18 @@ pub fn show(ui: &mut egui::Ui, icon: Option<&egui::TextureHandle>) {
                             .color(WIN11_TEXT),
                     );
                     ui.add_space(2.0);
-                    ui.label(
-                        egui::RichText::new("Switch input methods by typing.")
-                            .size(FONT_BODY)
-                            .color(WIN11_TEXT_SEC),
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(tr(lang, "Switch input methods by typing."))
+                                .size(FONT_BODY)
+                                .color(WIN11_TEXT_SEC),
+                        )
+                        .wrap(),
                     );
                     ui.add_space(4.0);
                     let version = env!("CARGO_PKG_VERSION");
                     ui.label(
-                        egui::RichText::new(format!("Version {version}  ·  © 2026 oguri701"))
+                        egui::RichText::new(format!("Version {version}  -  (c) 2026 oguri701"))
                             .size(FONT_CAPTION)
                             .color(WIN11_TEXT_SEC),
                     );
@@ -44,7 +47,7 @@ pub fn show(ui: &mut egui::Ui, icon: Option<&egui::TextureHandle>) {
             if ui
                 .add(
                     egui::Button::new(
-                        egui::RichText::new("View on GitHub")
+                        egui::RichText::new(tr(lang, "View on GitHub"))
                             .size(FONT_BODY)
                             .color(WIN11_ACCENT),
                     )
