@@ -2,7 +2,9 @@
 resolver = "2"
 members = [
     "crates/imeswitch-core",
+    "crates/imeswitch-tsf-protocol",
     "crates/imeswitch-windows",
+    "crates/slipkey-tsf-helper",
     "bins/slipkey-windows",
 ]
 
@@ -13,6 +15,7 @@ rust-version = "1.75"
 
 [workspace.dependencies]
 imeswitch-core = { path = "crates/imeswitch-core" }
+imeswitch-tsf-protocol = { path = "crates/imeswitch-tsf-protocol" }
 imeswitch-windows = { path = "crates/imeswitch-windows" }
 anyhow = "1"
 thiserror = "2"

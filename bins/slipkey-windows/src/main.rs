@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod dll_provisioning;
 mod hook_thread;
 mod startup;
 mod tray;
@@ -14,6 +15,22 @@ fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp_secs()
         .init();
+
+    // Provision the bundled helper DLL into %LOCALAPPDATA%\Slipkey\ before
+    // wiring TSF dispatch. Without this, IME switching falls back to "HKL only"
+    // silently (which is degraded behavior for Japanese alphanumeric mode).
+    match dll_provisioning::ensure_helper_dll() {
+        Ok(path) => {
+            imeswitch_windows::ime::tsf_dispatch::set_helper_dll_path(path);
+        }
+        Err(e) => {
+            log::error!(
+                "helper DLL provisioning failed: {} \
+                 (Japanese alphanumeric mode will be degraded)",
+                e
+            );
+        }
+    }
 
     let state: app::SharedState = Arc::new(Mutex::new(app::AppState::load()));
     let hook = hook_thread::spawn(state.clone());

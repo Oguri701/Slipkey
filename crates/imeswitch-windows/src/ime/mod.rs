@@ -8,7 +8,7 @@
 
 pub mod detect;
 pub mod layout;
-pub mod mode;
+pub mod tsf_dispatch;
 
 use imeswitch_core::Language;
 
@@ -211,50 +211,30 @@ impl Default for WindowsImeSwitcher {
 
 #[cfg(target_os = "windows")]
 fn switch_entry(entry: &WinEntry) -> Result<(), SwitchError> {
-    let focused = layout::focused_window();
+    // Step 1: HKL switch (stable, unchanged from before).
+    if let Some(hkl_id) = entry.hkl_id.as_deref() {
+        let hwnd = layout::focused_window();
+        let hkl = layout::load_or_find_layout(hkl_id)?;
+        layout::switch_layout_sync(hwnd, hkl)?;
+        layout::broadcast_layout_change(hkl);
+    }
 
-    match entry.mode {
-        WinImeMode::Alphanumeric => {
-            // Spawn a worker thread: the Japanese alphanumeric path has internal
-            // 10 ms delays that would block the hook callback if called here.
-            // Re-querying focused_window inside the thread avoids sending a
-            // non-Send HWND across thread boundaries.
-            std::thread::spawn(|| {
-                mode::set_ime_alphanumeric_mode(layout::focused_window());
-            });
-            Ok(())
-        }
-        WinImeMode::Native => {
-            let hkl_id = entry
-                .hkl_id
-                .as_deref()
-                .ok_or_else(|| SwitchError::NotInstalled(entry.language.to_string()))?;
-            let hkl = layout::load_or_find_layout(hkl_id)?;
-            // Synchronous switch to the focused window ensures the new IME context
-            // is active before we set the conversion mode.
-            layout::switch_layout_sync(focused, hkl)?;
-            layout::broadcast_layout_change(hkl);
-            // Offload the 30 ms settle wait + mode set to a worker thread so the
-            // hook callback returns promptly. Re-query focused_window in the thread
-            // to avoid sending a non-Send HWND across thread boundaries.
-            let language = entry.language.as_str().to_string();
-            std::thread::spawn(move || {
-                std::thread::sleep(std::time::Duration::from_millis(30));
-                mode::set_ime_native_mode_for_language(layout::focused_window(), &language);
-            });
-            Ok(())
-        }
-        WinImeMode::LayoutOnly => {
-            let hkl_id = entry
-                .hkl_id
-                .as_deref()
-                .ok_or_else(|| SwitchError::NotInstalled(entry.language.to_string()))?;
-            let hkl = layout::load_or_find_layout(hkl_id)?;
-            layout::switch_layout_sync(focused, hkl)?;
-            layout::broadcast_layout_change(hkl);
-            Ok(())
+    // Step 2: TSF Compartment write (Native / Alphanumeric only).
+    if let Some(target) = tsf_dispatch::TsfTarget::for_mode(entry.mode, entry.language.as_str()) {
+        if let Some(dispatcher) = tsf_dispatch::global() {
+            if let Err(e) = dispatcher.dispatch(target) {
+                // Silent by design (decision D6): log and move on.
+                log::warn!(
+                    "TSF dispatch failed for lang={} mode={:?}: {:?}",
+                    entry.language.as_str(),
+                    entry.mode,
+                    e
+                );
+            }
         }
     }
+
+    Ok(())
 }
 
 #[cfg(not(target_os = "windows"))]
