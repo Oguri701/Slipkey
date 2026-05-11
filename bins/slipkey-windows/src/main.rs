@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod dll_provisioning;
 mod hook_thread;
 mod startup;
 mod tray;

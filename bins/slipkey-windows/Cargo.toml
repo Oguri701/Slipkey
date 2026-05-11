@@ -21,6 +21,11 @@ tray-icon = "0.21"
 image = { version = "0.25", default-features = false, features = ["png"] }
 open = "5"
 raw-window-handle = "0.6"
+sha2 = "0.10"
+
+[dev-dependencies]
+hex = "0.4"
+tempfile = "3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.61", features = [
