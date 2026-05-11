@@ -135,7 +135,7 @@ crates/
 - `crates/imeswitch-windows/src/ime/mode.rs` 整个文件
 - `mod.rs::switch_entry` 中所有 `std::thread::spawn` + `sleep(30ms)` + `set_ime_*_mode` 分支
 - 所有 `VK_DBE_*` 模拟键代码
-- `REPLAY_MAGIC` 常量及 `hook.rs` 中对应的过滤逻辑
+- `mode.rs` 中复制定义的 `REPLAY_MAGIC` 常量（hook.rs 中的同名常量保留——它给状态机的按键 replay 用，与 DBE 模拟键无关）
 - `keep_ime_open_for_alphanumeric` 这类语言相关的特例函数
 
 ## 组件职责
@@ -359,7 +359,7 @@ fn switch_entry(entry: &WinEntry) -> Result<(), SwitchError> {
 4. **实现** `imeswitch-windows::ime::tsf_dispatch::TsfDispatcher`
 5. **修改** `ime::mod::switch_entry` 改用 `TsfDispatcher`
 6. **删除** `ime/mode.rs` 整个文件
-7. **删除** `hook.rs` 中 `REPLAY_MAGIC` 过滤逻辑（不再需要）
+7. **验证** `hook.rs` 中的 `REPLAY_MAGIC` 过滤仍是 replay 路径需要的（无需改动）
 8. **修改** `bins/slipkey-windows` 打包脚本：把 `slipkey_tsf.dll` 与 `Slipkey.exe` 一起放进发布 zip
 9. **修改** GitHub Actions workflow：构建 + 签名 DLL
 10. **更新** README 的 "Architecture" 与 "Build from source" 章节
