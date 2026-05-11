@@ -1,5 +1,3 @@
-use std::sync::{Arc, Mutex};
-
 use eframe::egui;
 use tray_icon::{menu::MenuEvent, TrayIconEvent};
 
@@ -45,12 +43,9 @@ enum Tab {
 pub struct SettingsWindow {
     state: SharedState,
     hook: HookHandle,
-    tray: Tray,
+    _tray: Tray,
     tab: Tab,
     icon_texture: Option<egui::TextureHandle>,
-    visible: bool,
-    tray_events: Arc<Mutex<Vec<TrayIconEvent>>>,
-    menu_events: Arc<Mutex<Vec<MenuEvent>>>,
 }
 
 impl SettingsWindow {
@@ -70,32 +65,34 @@ impl SettingsWindow {
             egui::TextureOptions::default(),
         );
 
-        let tray_events: Arc<Mutex<Vec<TrayIconEvent>>> = Arc::new(Mutex::new(Vec::new()));
-        let menu_events: Arc<Mutex<Vec<MenuEvent>>> = Arc::new(Mutex::new(Vec::new()));
-
-        let tray_sink = tray_events.clone();
         let ctx_for_tray = cc.egui_ctx.clone();
         TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
-            tray_sink.lock().unwrap().push(event);
-            ctx_for_tray.request_repaint();
+            if let TrayIconEvent::Click { .. } = event {
+                ctx_for_tray.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx_for_tray.send_viewport_cmd(egui::ViewportCommand::Focus);
+                ctx_for_tray.request_repaint();
+            }
         }));
 
-        let menu_sink = menu_events.clone();
         let ctx_for_menu = cc.egui_ctx.clone();
+        let open_id = tray.open_id.clone();
+        let quit_id = tray.quit_id.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-            menu_sink.lock().unwrap().push(event);
-            ctx_for_menu.request_repaint();
+            if event.id == open_id {
+                ctx_for_menu.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx_for_menu.send_viewport_cmd(egui::ViewportCommand::Focus);
+                ctx_for_menu.request_repaint();
+            } else if event.id == quit_id {
+                std::process::exit(0);
+            }
         }));
 
         Self {
             state,
             hook,
-            tray,
+            _tray: tray,
             tab: Tab::General,
             icon_texture: Some(icon_texture),
-            visible: false,
-            tray_events,
-            menu_events,
         }
     }
 }
@@ -105,27 +102,6 @@ impl eframe::App for SettingsWindow {
         if ctx.input(|input| input.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
-            self.visible = false;
-        }
-
-        let tray_events: Vec<_> = std::mem::take(&mut *self.tray_events.lock().unwrap());
-        for event in tray_events {
-            if let TrayIconEvent::Click { .. } = event {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                self.visible = true;
-            }
-        }
-
-        let menu_events: Vec<_> = std::mem::take(&mut *self.menu_events.lock().unwrap());
-        for event in menu_events {
-            if event.id == self.tray.open_id {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                self.visible = true;
-            } else if event.id == self.tray.quit_id {
-                std::process::exit(0);
-            }
         }
 
         let ui_language = {
