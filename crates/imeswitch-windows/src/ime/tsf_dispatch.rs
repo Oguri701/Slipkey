@@ -117,8 +117,8 @@ mod platform {
     use super::*;
 
     use imeswitch_tsf_protocol::{
-        completion_event_name, shared_memory_name, TsfCommand, TsfResult, ABI_VERSION,
-        DISPATCH_TIMEOUT_MS, HOST_PID_ENV_VAR,
+        completion_event_name, host_pid_memory_name, shared_memory_name, TsfCommand, TsfResult,
+        ABI_VERSION, DISPATCH_TIMEOUT_MS, HOST_PID_ENV_VAR,
     };
     use windows_sys::Win32::Foundation::{
         CloseHandle, GetLastError, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
@@ -143,6 +143,39 @@ mod platform {
         let tid = focused_thread_id().ok_or(DispatchError::NoFocusWindow)?;
         let host_pid = std::process::id();
 
+        let pid_name = wide(&host_pid_memory_name());
+        let pid_handle = unsafe {
+            CreateFileMappingW(
+                std::ptr::null_mut(),
+                std::ptr::null(),
+                PAGE_READWRITE,
+                0,
+                std::mem::size_of::<u32>() as u32,
+                pid_name.as_ptr(),
+            )
+        };
+        if pid_handle.is_null() {
+            return Err(DispatchError::System(unsafe { GetLastError() }));
+        }
+        let pid_view = unsafe {
+            MapViewOfFile(
+                pid_handle,
+                FILE_MAP_ALL_ACCESS,
+                0,
+                0,
+                std::mem::size_of::<u32>(),
+            )
+        };
+        if pid_view.Value.is_null() {
+            unsafe {
+                let _ = CloseHandle(pid_handle);
+            }
+            return Err(DispatchError::System(unsafe { GetLastError() }));
+        }
+        unsafe {
+            *(pid_view.Value as *mut u32) = host_pid;
+        }
+
         let shm_name = wide(&shared_memory_name(host_pid));
         let cmd_size = std::mem::size_of::<TsfCommand>();
         let shm_handle = unsafe {
@@ -156,6 +189,7 @@ mod platform {
             )
         };
         if shm_handle.is_null() {
+            cleanup_pid(pid_view, pid_handle);
             return Err(DispatchError::System(unsafe { GetLastError() }));
         }
         let view = unsafe { MapViewOfFile(shm_handle, FILE_MAP_ALL_ACCESS, 0, 0, cmd_size) };
@@ -163,6 +197,7 @@ mod platform {
             unsafe {
                 let _ = CloseHandle(shm_handle);
             };
+            cleanup_pid(pid_view, pid_handle);
             return Err(DispatchError::System(unsafe { GetLastError() }));
         }
         let cmd_ptr = view.Value as *mut TsfCommand;
@@ -188,6 +223,7 @@ mod platform {
                 let _ = UnmapViewOfFile(view);
                 let _ = CloseHandle(shm_handle);
             };
+            cleanup_pid(pid_view, pid_handle);
             return Err(DispatchError::System(unsafe { GetLastError() }));
         }
 
@@ -198,15 +234,18 @@ mod platform {
             );
         }
 
-        let helper_hmod = unsafe { LoadLibraryW(wide(&helper_dll_path.to_string_lossy()).as_ptr()) };
+        let helper_hmod =
+            unsafe { LoadLibraryW(wide(&helper_dll_path.to_string_lossy()).as_ptr()) };
         if helper_hmod.is_null() {
             cleanup(view, shm_handle, event_handle);
+            cleanup_pid(pid_view, pid_handle);
             return Err(DispatchError::System(unsafe { GetLastError() }));
         }
 
         let hook_proc = unsafe { GetProcAddress(helper_hmod, b"call_wnd_hook\0".as_ptr()) };
         if hook_proc.is_none() {
             cleanup(view, shm_handle, event_handle);
+            cleanup_pid(pid_view, pid_handle);
             return Err(DispatchError::System(unsafe { GetLastError() }));
         }
 
@@ -221,6 +260,7 @@ mod platform {
         if hook.is_null() {
             let err = unsafe { GetLastError() };
             cleanup(view, shm_handle, event_handle);
+            cleanup_pid(pid_view, pid_handle);
             return Err(DispatchError::InjectionRefused(err));
         }
 
@@ -251,6 +291,7 @@ mod platform {
         };
 
         cleanup(view, shm_handle, event_handle);
+        cleanup_pid(pid_view, pid_handle);
         outcome
     }
 
@@ -281,6 +322,13 @@ mod platform {
             let _ = UnmapViewOfFile(view);
             let _ = CloseHandle(shm);
             let _ = CloseHandle(event);
+        }
+    }
+
+    fn cleanup_pid(view: MEMORY_MAPPED_VIEW_ADDRESS, handle: HANDLE) {
+        unsafe {
+            let _ = UnmapViewOfFile(view);
+            let _ = CloseHandle(handle);
         }
     }
 

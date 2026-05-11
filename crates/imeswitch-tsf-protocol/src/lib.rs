@@ -40,6 +40,11 @@ pub fn shared_memory_name(host_pid: u32) -> String {
     format!(r"Local\Slipkey_TSF_v{}_{}", ABI_VERSION, host_pid)
 }
 
+/// Stable shared memory name used by the injected DLL to discover the host PID.
+pub fn host_pid_memory_name() -> String {
+    format!(r"Local\Slipkey_TSF_HostPid_v{}", ABI_VERSION)
+}
+
 /// Per-dispatch completion event name.
 pub fn completion_event_name(host_pid: u32, sequence: u32) -> String {
     format!(r"Local\Slipkey_TSF_Done_{}_{}", host_pid, sequence)
@@ -69,6 +74,11 @@ mod tests {
     #[test]
     fn shared_memory_name_includes_pid_and_version() {
         assert_eq!(shared_memory_name(1234), "Local\\Slipkey_TSF_v1_1234");
+    }
+
+    #[test]
+    fn host_pid_memory_name_includes_version() {
+        assert_eq!(host_pid_memory_name(), "Local\\Slipkey_TSF_HostPid_v1");
     }
 
     #[test]

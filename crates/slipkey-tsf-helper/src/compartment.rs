@@ -3,8 +3,8 @@
 use std::sync::atomic::Ordering;
 
 use imeswitch_tsf_protocol::{
-    completion_event_name, shared_memory_name, TsfCommand, TsfResult, ABI_VERSION,
-    HOST_PID_ENV_VAR,
+    completion_event_name, host_pid_memory_name, shared_memory_name, TsfCommand, TsfResult,
+    ABI_VERSION, HOST_PID_ENV_VAR,
 };
 use windows::core::{Interface, Result, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
@@ -20,7 +20,7 @@ use windows::Win32::System::Memory::{
 use windows::Win32::System::Threading::{OpenEventW, SetEvent, EVENT_MODIFY_STATE};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::TextServices::{
-    ITfCompartment, ITfCompartmentMgr, ITfThreadMgr, CLSID_TF_ThreadMgr,
+    CLSID_TF_ThreadMgr, ITfCompartment, ITfCompartmentMgr, ITfThreadMgr,
     GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION, GUID_COMPARTMENT_KEYBOARD_OPENCLOSE,
 };
 
@@ -73,8 +73,7 @@ fn try_execute() -> Result<()> {
             unsafe {
                 (*cmd_ptr).error_hresult = e.code().0 as u32;
             }
-            cmd.result
-                .store(TsfResult::Failed as u32, Ordering::SeqCst);
+            cmd.result.store(TsfResult::Failed as u32, Ordering::SeqCst);
         }
     }
 
@@ -100,9 +99,8 @@ fn do_tsf_write(open: bool, conversion_mode: u32) -> Result<()> {
     let v_open = i32_variant(if open { 1 } else { 0 });
     unsafe { open_cmp.SetValue(client_id, &v_open) }?;
 
-    let conv_cmp: ITfCompartment = unsafe {
-        cmp_mgr.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION)
-    }?;
+    let conv_cmp: ITfCompartment =
+        unsafe { cmp_mgr.GetCompartment(&GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION) }?;
     let v_conv = i32_variant(conversion_mode as i32);
     unsafe { conv_cmp.SetValue(client_id, &v_conv) }?;
 
@@ -122,6 +120,10 @@ impl Drop for ComGuard {
 }
 
 fn read_host_pid() -> Option<u32> {
+    if let Some(pid) = read_host_pid_from_mapping() {
+        return Some(pid);
+    }
+
     let name = wide(HOST_PID_ENV_VAR);
     let mut buf = vec![0u16; 32];
     let len = unsafe { GetEnvironmentVariableW(PCWSTR(name.as_ptr()), Some(&mut buf)) };
@@ -130,6 +132,33 @@ fn read_host_pid() -> Option<u32> {
     }
     let s = String::from_utf16(&buf[..len as usize]).ok()?;
     s.trim().parse::<u32>().ok()
+}
+
+fn read_host_pid_from_mapping() -> Option<u32> {
+    let name = wide(&host_pid_memory_name());
+    let handle =
+        unsafe { OpenFileMappingW(FILE_MAP_ALL_ACCESS.0, false, PCWSTR(name.as_ptr())) }.ok()?;
+    let view = unsafe {
+        MapViewOfFile(
+            handle,
+            FILE_MAP_ALL_ACCESS,
+            0,
+            0,
+            std::mem::size_of::<u32>(),
+        )
+    };
+    if view.Value.is_null() {
+        unsafe {
+            let _ = CloseHandle(handle);
+        }
+        return None;
+    }
+    let pid = unsafe { *(view.Value as *const u32) };
+    unsafe {
+        let _ = UnmapViewOfFile(view);
+        let _ = CloseHandle(handle);
+    }
+    (pid != 0).then_some(pid)
 }
 
 fn signal_done(host_pid: u32, sequence: u32) {
