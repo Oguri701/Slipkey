@@ -112,12 +112,14 @@ rm -rf /Applications/Slipkey.app ~/.config/imeswitch
 
 ```bash
 cargo build --release -p slipkey-windows --target x86_64-pc-windows-msvc
+cargo build --release -p slipkey-tsf-helper --target x86_64-pc-windows-msvc
 ```
 
 构建产物：
 
 ```text
 target/x86_64-pc-windows-msvc/release/Slipkey.exe
+target/x86_64-pc-windows-msvc/release/slipkey_tsf_helper.dll  (rename to slipkey_tsf.dll)
 ```
 
 ### 配置文件
@@ -197,7 +199,11 @@ bins/
 
 crates/
   imeswitch-core/       Pure-Rust state machine shared by platform apps
-  imeswitch-windows/    Windows hook + IME switching
+  imeswitch-tsf-protocol/
+                        Shared ABI between Slipkey.exe and slipkey_tsf.dll
+  imeswitch-windows/    Windows hook + HKL + TSF dispatch
+  slipkey-tsf-helper/   Short-lived cdylib injected into the focused GUI
+                        thread for authoritative TSF Compartment writes
 
 scripts/
   package-macos.sh      macOS build pipeline
@@ -308,6 +314,14 @@ rm -rf /Applications/Slipkey.app ~/.config/imeswitch
 
 ```bash
 cargo build --release -p slipkey-windows --target x86_64-pc-windows-msvc
+cargo build --release -p slipkey-tsf-helper --target x86_64-pc-windows-msvc
+```
+
+Build outputs:
+
+```text
+target/x86_64-pc-windows-msvc/release/Slipkey.exe
+target/x86_64-pc-windows-msvc/release/slipkey_tsf_helper.dll  (rename to slipkey_tsf.dll)
 ```
 
 ### Config
@@ -358,6 +372,30 @@ Slipkey works at the keycode-event layer instead:
 - Windows: `WH_KEYBOARD_LL`
 
 This lets Slipkey detect and consume trigger sequences before the active IME converts them.
+
+## Architecture
+
+```text
+bins/
+  slipkey-app/          macOS native app (Swift, SwiftPM)
+  slipkey-windows/      Windows native app (Rust, egui)
+
+crates/
+  imeswitch-core/         Pure-Rust state machine shared by platform apps
+  imeswitch-tsf-protocol/ Shared ABI between Slipkey.exe and slipkey_tsf.dll
+  imeswitch-windows/      Windows hook + HKL + TSF dispatch
+  slipkey-tsf-helper/     Short-lived cdylib injected into focused GUI
+                          thread for authoritative TSF Compartment writes
+```
+
+### Two-Stage Switching on Windows
+
+`;ja` / `;en` triggers two operations:
+
+1. **HKL switch** - `WM_INPUTLANGCHANGEREQUEST` to the focused window
+2. **TSF Compartment write** - `slipkey_tsf.dll` is briefly injected into the focused GUI thread via `SetWindowsHookEx(WH_CALLWNDPROC)`; inside that thread we set `GUID_COMPARTMENT_KEYBOARD_INPUTMODE_CONVERSION` through `ITfCompartment`. The injection lasts <10ms and unloads immediately.
+
+Step 2 may be refused for UWP / protected processes; in that case we silently log and continue (HKL has already switched).
 
 ## Release Automation
 
