@@ -9,6 +9,7 @@
 pub mod detect;
 pub mod layout;
 pub mod mode;
+pub mod tsf_dispatch;
 
 use imeswitch_core::Language;
 
