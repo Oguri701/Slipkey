@@ -46,6 +46,14 @@ final class AppState: ObservableObject {
         launchAtLogin = LoginItemService.isEnabled
     }
 
+    func refreshAccessibilityStatus() {
+        let trusted = AccessibilityService.isTrusted
+        accessibilityGranted = trusted
+        if trusted && !hook.isRunning {
+            _ = hook.start(with: config)
+        }
+    }
+
     func refreshDetectedSources() {
         detectedSources = inputSourceService.discover()
         if detectedSources.isEmpty {
@@ -76,6 +84,6 @@ final class AppState: ObservableObject {
 
     func requestAccessibility() {
         AccessibilityService.request()
-        accessibilityGranted = AccessibilityService.isTrusted
+        refreshAccessibilityStatus()
     }
 }

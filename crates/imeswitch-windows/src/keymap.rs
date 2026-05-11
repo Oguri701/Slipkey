@@ -6,6 +6,7 @@ use imeswitch_core::Key;
 
 pub const VK_SEMICOLON: u32 = 0xBA; // VK_OEM_1 on US keyboards.
 pub const VK_JIS_SEMICOLON: u32 = 0xBB; // Semicolon key on Japanese keyboard layouts.
+pub const SC_SEMICOLON: u32 = 0x27; // Physical semicolon key position.
 
 /// Map a leader character (e.g. `;`, `,`, `/`) to the Windows virtual-key code
 /// that produces it without modifiers on a US-QWERTY layout. Returns `None`
@@ -46,6 +47,22 @@ pub fn vk_to_key_with_leader(vk: u32, leader_vk: u32) -> Key {
 
 pub fn is_leader_vk(vk: u32, leader_vk: u32) -> bool {
     vk == leader_vk || (leader_vk == VK_SEMICOLON && vk == VK_JIS_SEMICOLON)
+}
+
+pub fn is_leader_key_event(vk: u32, scan_code: u32, leader_vk: u32) -> bool {
+    vk == leader_vk
+        || (leader_vk == VK_SEMICOLON && vk == VK_JIS_SEMICOLON && scan_code == SC_SEMICOLON)
+}
+
+pub fn vk_to_key_event_with_leader(vk: u32, scan_code: u32, leader_vk: u32) -> Key {
+    if is_leader_key_event(vk, scan_code, leader_vk) {
+        return Key::Leader;
+    }
+    match vk {
+        0x30..=0x39 => Key::alpha_num(char::from_u32(vk).unwrap_or('\0')),
+        0x41..=0x5A => Key::alpha_num(char::from_u32(vk).unwrap_or('\0')),
+        _ => Key::Other,
+    }
 }
 
 pub fn key_to_vk(key: Key) -> Option<u32> {
@@ -95,6 +112,18 @@ mod tests {
         assert_eq!(
             vk_to_key_with_leader(VK_JIS_SEMICOLON, VK_SEMICOLON),
             Key::Leader
+        );
+    }
+
+    #[test]
+    fn default_leader_accepts_japanese_keyboard_semicolon_only_at_semicolon_scan_code() {
+        assert_eq!(
+            vk_to_key_event_with_leader(VK_JIS_SEMICOLON, SC_SEMICOLON, VK_SEMICOLON),
+            Key::Leader
+        );
+        assert_eq!(
+            vk_to_key_event_with_leader(VK_JIS_SEMICOLON, 0x0d, VK_SEMICOLON),
+            Key::Other
         );
     }
 }

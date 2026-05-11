@@ -1,6 +1,9 @@
 //! Windows low-level keyboard hook that feeds keydowns into `imeswitch-core`.
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    atomic::{AtomicBool, AtomicU32, Ordering},
+    Arc, Mutex,
+};
 use std::time::{Duration, Instant};
 
 use imeswitch_core::{Key, Language, StateMachine};
@@ -16,15 +19,18 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{
 };
 
 use crate::composition::{is_cjk_ime_active, is_composing};
-use crate::ime::{WindowsImeSwitcher, WinMapping};
+use crate::ime::{WinMapping, WindowsImeSwitcher};
 use crate::keymap::{
-    is_leader_vk, key_to_vk_with_leader, leader_vk_for, vk_to_key_with_leader, VK_SEMICOLON,
+    is_leader_key_event, key_to_vk_with_leader, leader_vk_for, vk_to_key_event_with_leader,
+    VK_SEMICOLON,
 };
 
 const REPLAY_MAGIC: usize = 0x696d_6573_7769_6e36;
 const COMPOSITION_IDLE_THRESHOLD: Duration = Duration::from_millis(500);
 
 static HOOK_STATE: Mutex<Option<HookState>> = Mutex::new(None);
+static LEADER_VK: AtomicU32 = AtomicU32::new(VK_SEMICOLON);
+static HOOK_IDLE: AtomicBool = AtomicBool::new(true);
 
 #[derive(Debug)]
 pub enum HookError {
@@ -54,9 +60,17 @@ struct HookState {
     switcher: Arc<Mutex<WindowsImeSwitcher>>,
     possible_composition: bool,
     last_keydown: Option<Instant>,
-    leader_vk: u32,
 }
 
+/// Installs a low-level keyboard hook on the current thread's message loop and
+/// drives the trigger state machine for every keydown.
+///
+/// Lifetime: keep the EventHook instance alive for as long as the hook is
+/// installed. `Drop` unhooks the Win32 handle and clears the shared hook state.
+///
+/// Threading: the WH_KEYBOARD_LL callback runs on the thread that installed the
+/// hook and is pumping the message loop. Shared state is kept behind a mutex and
+/// small atomics so the hot path can skip heavier IME queries while idle.
 pub struct EventHook {
     hook: HHOOK,
 }
@@ -77,12 +91,13 @@ impl EventHook {
             if guard.is_some() {
                 return Err(HookError::AlreadyInstalled);
             }
+            LEADER_VK.store(leader_vk, Ordering::Relaxed);
+            HOOK_IDLE.store(true, Ordering::Relaxed);
             *guard = Some(HookState {
                 sm: StateMachine::from_mappings(mappings),
                 switcher,
                 possible_composition: false,
                 last_keydown: None,
-                leader_vk,
             });
         }
 
@@ -107,7 +122,13 @@ impl EventHook {
     pub fn update_config(&self, mapping: &WinMapping) {
         if let Some(state) = HOOK_STATE.lock().unwrap().as_mut() {
             state.sm = StateMachine::from_mappings(mapping.trigger_mappings());
-            state.leader_vk = leader_vk_for(mapping.leader()).unwrap_or(VK_SEMICOLON);
+            LEADER_VK.store(
+                leader_vk_for(mapping.leader()).unwrap_or(VK_SEMICOLON),
+                Ordering::Relaxed,
+            );
+            HOOK_IDLE.store(true, Ordering::Relaxed);
+            state.possible_composition = false;
+            state.last_keydown = None;
         }
     }
 }
@@ -120,6 +141,8 @@ impl Drop for EventHook {
             }
         }
         *HOOK_STATE.lock().unwrap() = None;
+        LEADER_VK.store(VK_SEMICOLON, Ordering::Relaxed);
+        HOOK_IDLE.store(true, Ordering::Relaxed);
     }
 }
 
@@ -157,6 +180,11 @@ unsafe extern "system" fn low_level_keyboard_proc(
 }
 
 fn handle_keydown(vk: u32, scan_code: u32, flags: u32) -> Result<bool, HookError> {
+    let leader_vk = LEADER_VK.load(Ordering::Relaxed);
+    if should_passthrough_idle_key(vk, scan_code, leader_vk, HOOK_IDLE.load(Ordering::Relaxed)) {
+        return Ok(false);
+    }
+
     let composing = is_composing();
     let has_mod = has_blocking_modifier();
     let now = Instant::now();
@@ -167,12 +195,11 @@ fn handle_keydown(vk: u32, scan_code: u32, flags: u32) -> Result<bool, HookError
     let (response, leader_vk, switcher_arc) = {
         let mut guard = HOOK_STATE.lock().unwrap();
         let state = guard.as_mut().ok_or(HookError::StateUnavailable)?;
-        let leader_vk = state.leader_vk;
         let recently_typed = state
             .last_keydown
             .map(|last| now.duration_since(last) < COMPOSITION_IDLE_THRESHOLD)
             .unwrap_or(false);
-        let is_leader_key = is_leader_vk(vk, leader_vk);
+        let is_leader_key = is_leader_key_event(vk, scan_code, leader_vk);
         let should_defer = should_defer_to_ime(
             state.sm.is_idle(),
             is_leader_key,
@@ -197,18 +224,28 @@ fn handle_keydown(vk: u32, scan_code: u32, flags: u32) -> Result<bool, HookError
 
         if should_defer {
             state.last_keydown = Some(now);
-            update_possible_composition(state, true, vk, false);
+            HOOK_IDLE.store(true, Ordering::Relaxed);
+            update_possible_composition(state, true, Key::Other, vk, leader_vk, false);
             return Ok(false);
         }
 
         let key = if has_mod {
             Key::Other
         } else {
-            vk_to_key_with_leader(vk, leader_vk)
+            vk_to_key_event_with_leader(vk, scan_code, leader_vk)
         };
         let response = state.sm.on_keydown(key);
         state.last_keydown = Some(now);
-        update_possible_composition(state, composing, vk, response.switch.is_some());
+        let is_idle = state.sm.is_idle();
+        HOOK_IDLE.store(is_idle, Ordering::Relaxed);
+        update_possible_composition(
+            state,
+            composing,
+            key,
+            vk,
+            leader_vk,
+            response.switch.is_some(),
+        );
 
         log::debug!(
             "  -> key={:?} suppress={} replay={:?} switch={:?}",
@@ -237,6 +274,16 @@ fn handle_keydown(vk: u32, scan_code: u32, flags: u32) -> Result<bool, HookError
     Ok(response.suppress)
 }
 
+fn should_passthrough_idle_key(vk: u32, scan_code: u32, leader_vk: u32, is_idle: bool) -> bool {
+    is_idle
+        && !is_leader_key_event(vk, scan_code, leader_vk)
+        && matches!(
+            vk_to_key_event_with_leader(vk, scan_code, leader_vk),
+            Key::Other
+        )
+        && !is_composition_ending_key(vk, leader_vk)
+}
+
 fn has_blocking_modifier() -> bool {
     [
         VK_SHIFT,
@@ -255,14 +302,19 @@ fn has_blocking_modifier() -> bool {
     .any(|vk| unsafe { GetAsyncKeyState(*vk as i32) } < 0)
 }
 
-fn update_possible_composition(state: &mut HookState, composing: bool, vk: u32, did_switch: bool) {
-    if did_switch || is_composition_ending_key(vk, state.leader_vk) {
+fn update_possible_composition(
+    state: &mut HookState,
+    composing: bool,
+    key: Key,
+    vk: u32,
+    leader_vk: u32,
+    did_switch: bool,
+) {
+    if did_switch || is_composition_ending_key(vk, leader_vk) {
         state.possible_composition = false;
-    } else if composing || vk_to_key_with_leader(vk, state.leader_vk) == Key::Other {
+    } else if composing || key == Key::Other {
         state.possible_composition = true;
-    } else if is_cjk_ime_active()
-        && matches!(vk_to_key_with_leader(vk, state.leader_vk), Key::AlphaNum(_))
-    {
+    } else if is_cjk_ime_active() && matches!(key, Key::AlphaNum(_)) {
         // TSF-based IMEs (Microsoft Pinyin/Japanese) don't report via IMM32.
         // Treat alphanum presses while a CJK layout is active as potential
         // composition input, mirroring the macOS idle fallback.
@@ -318,6 +370,36 @@ mod tests {
     #[test]
     fn active_trigger_sequence_does_not_defer_to_ime() {
         assert!(!should_defer_to_ime(false, false, true, true, true, false));
+    }
+
+    #[test]
+    fn idle_other_non_leader_can_skip_heavy_hook_path() {
+        assert!(should_passthrough_idle_key(0x70, 0x3b, VK_SEMICOLON, true));
+    }
+
+    #[test]
+    fn idle_alphanumeric_non_leader_keeps_composition_bookkeeping() {
+        assert!(!should_passthrough_idle_key(0x41, 0x1e, VK_SEMICOLON, true));
+    }
+
+    #[test]
+    fn idle_leader_cannot_skip_heavy_hook_path() {
+        assert!(!should_passthrough_idle_key(
+            VK_SEMICOLON,
+            0x27,
+            VK_SEMICOLON,
+            true
+        ));
+    }
+
+    #[test]
+    fn active_sequence_cannot_skip_heavy_hook_path() {
+        assert!(!should_passthrough_idle_key(
+            0x41,
+            0x1e,
+            VK_SEMICOLON,
+            false
+        ));
     }
 }
 

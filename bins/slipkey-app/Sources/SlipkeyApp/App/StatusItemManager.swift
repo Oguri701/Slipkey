@@ -3,10 +3,12 @@ import AppKit
 @MainActor
 final class StatusItemManager: NSObject, NSMenuDelegate {
     private let appState: AppState
+    private let windowManager: WindowManager
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
 
-    init(appState: AppState) {
+    init(appState: AppState, windowManager: WindowManager) {
         self.appState = appState
+        self.windowManager = windowManager
         super.init()
         item.button?.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Slipkey")
         item.button?.image?.isTemplate = true
@@ -36,7 +38,7 @@ final class StatusItemManager: NSObject, NSMenuDelegate {
     }
 
     @objc private func openPreferences() {
-        WindowManager.shared?.showSettings()
+        windowManager.showSettings()
     }
 
     @objc private func requestAccessibility() {

@@ -4,8 +4,6 @@ import SwiftUI
 
 @MainActor
 final class WindowManager: NSObject, NSWindowDelegate, NSToolbarDelegate {
-    static weak var shared: WindowManager?
-
     private let appState: AppState
     private let tabState = SettingsTabState()
     private var settingsWindow: NSWindow?
@@ -22,7 +20,6 @@ final class WindowManager: NSObject, NSWindowDelegate, NSToolbarDelegate {
     init(appState: AppState) {
         self.appState = appState
         super.init()
-        WindowManager.shared = self
     }
 
     func showSettings() {

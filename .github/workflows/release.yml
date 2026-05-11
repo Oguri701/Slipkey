@@ -62,27 +62,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # The slipkey-windows build.rs preflight requires
-      # bins/slipkey-windows/embed/slipkey_tsf.dll to exist before any cargo
-      # action touches slipkey-windows — including `cargo test --workspace`.
-      # So: helper DLL first, stage into embed/, then test, then release build.
-      - name: Build helper DLL
-        run: cargo build --release -p slipkey-tsf-helper --target x86_64-pc-windows-msvc
-
+      # The slipkey-windows build.rs preflight requires the embedded helper
+      # DLL to exist before cargo touches slipkey-windows. Keep that local/CI
+      # choreography in xtask instead of duplicating copy commands here.
       - name: Stage helper DLL into embed/
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path bins/slipkey-windows/embed | Out-Null
-          Copy-Item `
-            target/x86_64-pc-windows-msvc/release/slipkey_tsf_helper.dll `
-            bins/slipkey-windows/embed/slipkey_tsf.dll `
-            -Force
+        run: cargo xtask stage-windows-helper
 
       - name: Test Rust workspace
         run: cargo test --workspace
 
       - name: Build Slipkey.exe (with embedded DLL)
-        run: cargo build --release -p slipkey-windows --target x86_64-pc-windows-msvc
+        run: cargo xtask build-windows
 
       - name: Package Windows artifact (single file)
         shell: pwsh

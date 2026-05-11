@@ -54,11 +54,13 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, hook: &HookHandle) {
                         Config::default(),
                         &state.detected_sources,
                     );
+                    state.config.ui_language = Some(state.ui_language.clone());
                     state.status_message =
-                        "Defaults restored. Click Save to apply.".to_string();
+                        tr(&lang, "Defaults restored. Click Save to apply.").to_string();
                 }
                 if ui.button(tr(&lang, "Save")).clicked() {
-                    if let Some(error) = validation_error(&state.config) {
+                    state.config.ui_language = Some(state.ui_language.clone());
+                    if let Some(error) = validation_error(&state.config, &lang) {
                         state.status_message = error;
                     } else {
                         let result = save(&state.config).and_then(|()| {
@@ -68,10 +70,11 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState, hook: &HookHandle) {
                         match result {
                             Ok(()) => {
                                 state.status_message =
-                                    "Saved. Shortcuts are active now.".to_string();
+                                    tr(&lang, "Saved. Shortcuts are active now.").to_string();
                             }
                             Err(error) => {
-                                state.status_message = format!("Save failed: {error}");
+                                state.status_message =
+                                    format!("{}: {error}", tr(&lang, "Save failed"));
                             }
                         }
                     }
@@ -180,7 +183,7 @@ fn table_header(ui: &mut egui::Ui, label: &str, width: f32) {
     );
 }
 
-fn validation_error(config: &Config) -> Option<String> {
+fn validation_error(config: &Config, lang: &str) -> Option<String> {
     let mappings = config.mappings.as_ref()?;
     let prefixes = mappings
         .iter()
@@ -197,20 +200,26 @@ fn validation_error(config: &Config) -> Option<String> {
         .iter()
         .any(|(_, prefix)| !prefix.chars().all(|c| c.is_ascii_alphanumeric()))
     {
-        return Some("Prefixes can only contain letters and numbers.".to_string());
+        return Some(tr(lang, "Prefixes can only contain letters and numbers.").to_string());
     }
 
     let mut seen = std::collections::HashSet::new();
     for (_, prefix) in &prefixes {
         if !seen.insert(prefix) {
-            return Some("Prefixes must be unique.".to_string());
+            return Some(tr(lang, "Prefixes must be unique.").to_string());
         }
     }
 
     for (index, (_, prefix)) in prefixes.iter().enumerate() {
         for (_, other) in prefixes.iter().skip(index + 1) {
             if prefix != other && (prefix.starts_with(other) || other.starts_with(prefix)) {
-                return Some("Prefixes cannot start with another configured prefix.".to_string());
+                return Some(
+                    tr(
+                        lang,
+                        "Prefixes cannot start with another configured prefix.",
+                    )
+                    .to_string(),
+                );
             }
         }
     }

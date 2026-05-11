@@ -1,5 +1,7 @@
 use eframe::egui;
 
+use imeswitch_windows::config::save;
+
 use super::{
     language_label, tr, FONT_BODY, FONT_BODY_STRONG, FONT_CAPTION, WIN11_ACCENT, WIN11_SUCCESS,
     WIN11_TEXT, WIN11_TEXT_SEC, WIN11_WARNING,
@@ -18,7 +20,9 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
                 state.launch_at_login,
                 |launch| match crate::startup::set_enabled(launch) {
                     Ok(()) => state.launch_at_login = launch,
-                    Err(error) => state.status_message = format!("Startup error: {error}"),
+                    Err(error) => {
+                        state.status_message = format!("{}: {error}", tr(&lang, "Startup error"))
+                    }
                 },
             );
         });
@@ -27,7 +31,15 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
 
         super::win11_card(ui, |ui| {
             super::section_title(ui, tr(&lang, "Language"));
-            language_picker(ui, tr(&lang, "Display language"), &mut state.ui_language);
+            if language_picker(ui, tr(&lang, "Display language"), &mut state.ui_language) {
+                state.config.ui_language = Some(state.ui_language.clone());
+                if let Err(error) = save(&state.config) {
+                    state.status_message =
+                        format!("{}: {error}", tr(&state.ui_language, "Save failed"));
+                } else {
+                    state.status_message.clear();
+                }
+            }
         });
 
         ui.add_space(8.0);
@@ -44,7 +56,8 @@ pub fn show(ui: &mut egui::Ui, state: &mut AppState) {
     });
 }
 
-fn language_picker(ui: &mut egui::Ui, title: &str, ui_language: &mut String) {
+fn language_picker(ui: &mut egui::Ui, title: &str, ui_language: &mut String) -> bool {
+    let mut changed = false;
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new(title)
@@ -57,12 +70,19 @@ fn language_picker(ui: &mut egui::Ui, title: &str, ui_language: &mut String) {
                 .width(128.0)
                 .selected_text(language_label(ui_language))
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(ui_language, "en".to_string(), "English");
-                    ui.selectable_value(ui_language, "zh".to_string(), language_label("zh"));
-                    ui.selectable_value(ui_language, "ja".to_string(), language_label("ja"));
+                    changed |= ui
+                        .selectable_value(ui_language, "en".to_string(), "English")
+                        .changed();
+                    changed |= ui
+                        .selectable_value(ui_language, "zh".to_string(), language_label("zh"))
+                        .changed();
+                    changed |= ui
+                        .selectable_value(ui_language, "ja".to_string(), language_label("ja"))
+                        .changed();
                 });
         });
     });
+    changed
 }
 
 fn setting_toggle(

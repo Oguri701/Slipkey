@@ -1393,15 +1393,15 @@ dependencies = [
 
 [[package]]
 name = "imeswitch-core"
-version = "0.1.5"
+version = "0.1.6"
 
 [[package]]
 name = "imeswitch-tsf-protocol"
-version = "0.1.5"
+version = "0.1.6"
 
 [[package]]
 name = "imeswitch-windows"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "imeswitch-core",
@@ -2633,7 +2633,7 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
 name = "slipkey-tsf-helper"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "imeswitch-tsf-protocol",
  "log",
@@ -2642,7 +2642,7 @@ dependencies = [
 
 [[package]]
 name = "slipkey-windows"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "eframe",
@@ -3720,6 +3720,10 @@ name = "xml-rs"
 version = "0.8.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3ae8337f8a065cfc972643663ea4279e04e7256de865aa66fe25cec5fb912d3f"
+
+[[package]]
+name = "xtask"
+version = "0.1.0"
 
 [[package]]
 name = "yoke"

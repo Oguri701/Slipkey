@@ -3,8 +3,7 @@
 use std::sync::atomic::Ordering;
 
 use imeswitch_tsf_protocol::{
-    completion_event_name, host_pid_memory_name, shared_memory_name, TsfCommand, TsfResult,
-    ABI_VERSION, HOST_PID_ENV_VAR,
+    completion_event_name, shared_memory_name, TsfCommand, TsfResult, ABI_VERSION,
 };
 use windows::core::{Interface, Result, PCWSTR};
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
@@ -12,12 +11,13 @@ use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER,
     COINIT_APARTMENTTHREADED,
 };
-use windows::Win32::System::Environment::GetEnvironmentVariableW;
 use windows::Win32::System::Memory::{
     MapViewOfFile, OpenFileMappingW, UnmapViewOfFile, FILE_MAP_ALL_ACCESS,
     MEMORY_MAPPED_VIEW_ADDRESS,
 };
-use windows::Win32::System::Threading::{OpenEventW, SetEvent, EVENT_MODIFY_STATE};
+use windows::Win32::System::Threading::{
+    GetCurrentThreadId, OpenEventW, SetEvent, EVENT_MODIFY_STATE,
+};
 use windows::Win32::System::Variant::VARIANT;
 use windows::Win32::UI::TextServices::{
     CLSID_TF_ThreadMgr, ITfCompartment, ITfCompartmentMgr, ITfThreadMgr,
@@ -31,9 +31,9 @@ pub fn execute_once() {
 }
 
 fn try_execute() -> Result<()> {
-    let host_pid = read_host_pid().ok_or_else(windows::core::Error::from_win32)?;
+    let target_thread_id = unsafe { GetCurrentThreadId() };
 
-    let shm_name = wide(&shared_memory_name(host_pid));
+    let shm_name = wide(&shared_memory_name(target_thread_id));
     let shm_handle =
         unsafe { OpenFileMappingW(FILE_MAP_ALL_ACCESS.0, false, PCWSTR(shm_name.as_ptr())) }?;
     let view = unsafe {
@@ -57,7 +57,7 @@ fn try_execute() -> Result<()> {
     if cmd.abi_version != ABI_VERSION {
         cmd.result
             .store(TsfResult::AbiMismatch as u32, Ordering::SeqCst);
-        signal_done(host_pid, cmd.sequence);
+        signal_done(target_thread_id, cmd.sequence);
         cleanup(view, shm_handle);
         return Ok(());
     }
@@ -77,7 +77,7 @@ fn try_execute() -> Result<()> {
         }
     }
 
-    signal_done(host_pid, sequence);
+    signal_done(target_thread_id, sequence);
     cleanup(view, shm_handle);
     Ok(())
 }
@@ -119,50 +119,8 @@ impl Drop for ComGuard {
     }
 }
 
-fn read_host_pid() -> Option<u32> {
-    if let Some(pid) = read_host_pid_from_mapping() {
-        return Some(pid);
-    }
-
-    let name = wide(HOST_PID_ENV_VAR);
-    let mut buf = vec![0u16; 32];
-    let len = unsafe { GetEnvironmentVariableW(PCWSTR(name.as_ptr()), Some(&mut buf)) };
-    if len == 0 || (len as usize) >= buf.len() {
-        return None;
-    }
-    let s = String::from_utf16(&buf[..len as usize]).ok()?;
-    s.trim().parse::<u32>().ok()
-}
-
-fn read_host_pid_from_mapping() -> Option<u32> {
-    let name = wide(&host_pid_memory_name());
-    let handle =
-        unsafe { OpenFileMappingW(FILE_MAP_ALL_ACCESS.0, false, PCWSTR(name.as_ptr())) }.ok()?;
-    let view = unsafe {
-        MapViewOfFile(
-            handle,
-            FILE_MAP_ALL_ACCESS,
-            0,
-            0,
-            std::mem::size_of::<u32>(),
-        )
-    };
-    if view.Value.is_null() {
-        unsafe {
-            let _ = CloseHandle(handle);
-        }
-        return None;
-    }
-    let pid = unsafe { *(view.Value as *const u32) };
-    unsafe {
-        let _ = UnmapViewOfFile(view);
-        let _ = CloseHandle(handle);
-    }
-    (pid != 0).then_some(pid)
-}
-
-fn signal_done(host_pid: u32, sequence: u32) {
-    let name = wide(&completion_event_name(host_pid, sequence));
+fn signal_done(target_thread_id: u32, sequence: u32) {
+    let name = wide(&completion_event_name(target_thread_id, sequence));
     unsafe {
         if let Ok(handle) = OpenEventW(EVENT_MODIFY_STATE, false, PCWSTR(name.as_ptr())) {
             let _ = SetEvent(handle);

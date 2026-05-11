@@ -13,5 +13,8 @@
 # dependency entirely — the right trade-off for a small standalone tool
 # people will download and run from a zip.
 
+[alias]
+xtask = "run -p xtask --"
+
 [target.x86_64-pc-windows-msvc]
 rustflags = ["-C", "target-feature=+crt-static"]

@@ -35,24 +35,21 @@ pub enum TsfResult {
     AbiMismatch = 3,
 }
 
-/// Shared memory name (Local kernel namespace, scoped to host PID).
-pub fn shared_memory_name(host_pid: u32) -> String {
-    format!(r"Local\Slipkey_TSF_v{}_{}", ABI_VERSION, host_pid)
-}
-
-/// Stable shared memory name used by the injected DLL to discover the host PID.
-pub fn host_pid_memory_name() -> String {
-    format!(r"Local\Slipkey_TSF_HostPid_v{}", ABI_VERSION)
+/// Shared memory name (Local kernel namespace, scoped to target GUI thread).
+pub fn shared_memory_name(target_thread_id: u32) -> String {
+    format!(
+        r"Local\Slipkey_TSF_v{}_thread_{}",
+        ABI_VERSION, target_thread_id
+    )
 }
 
 /// Per-dispatch completion event name.
-pub fn completion_event_name(host_pid: u32, sequence: u32) -> String {
-    format!(r"Local\Slipkey_TSF_Done_{}_{}", host_pid, sequence)
+pub fn completion_event_name(target_thread_id: u32, sequence: u32) -> String {
+    format!(
+        r"Local\Slipkey_TSF_Done_thread_{}_{}",
+        target_thread_id, sequence
+    )
 }
-
-/// Environment variable through which the DLL learns the host PID
-/// (set by host before SetWindowsHookEx, read by DLL on first hook callback).
-pub const HOST_PID_ENV_VAR: &str = "SLIPKEY_TSF_HOST_PID";
 
 #[cfg(test)]
 mod tests {
@@ -72,25 +69,18 @@ mod tests {
     }
 
     #[test]
-    fn shared_memory_name_includes_pid_and_version() {
-        assert_eq!(shared_memory_name(1234), "Local\\Slipkey_TSF_v1_1234");
-    }
-
-    #[test]
-    fn host_pid_memory_name_includes_version() {
-        assert_eq!(host_pid_memory_name(), "Local\\Slipkey_TSF_HostPid_v1");
-    }
-
-    #[test]
-    fn completion_event_name_includes_pid_and_sequence() {
+    fn shared_memory_name_includes_thread_and_version() {
         assert_eq!(
-            completion_event_name(1234, 7),
-            "Local\\Slipkey_TSF_Done_1234_7"
+            shared_memory_name(1234),
+            "Local\\Slipkey_TSF_v1_thread_1234"
         );
     }
 
     #[test]
-    fn host_pid_env_var_is_stable() {
-        assert_eq!(HOST_PID_ENV_VAR, "SLIPKEY_TSF_HOST_PID");
+    fn completion_event_name_includes_thread_and_sequence() {
+        assert_eq!(
+            completion_event_name(1234, 7),
+            "Local\\Slipkey_TSF_Done_thread_1234_7"
+        );
     }
 }

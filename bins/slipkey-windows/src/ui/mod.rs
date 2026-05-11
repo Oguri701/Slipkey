@@ -55,7 +55,7 @@ enum Tab {
 pub struct SettingsWindow {
     state: SharedState,
     hook: HookHandle,
-    _tray: Tray,
+    tray: Tray,
     tab: Tab,
     icon_texture: Option<egui::TextureHandle>,
     /// Main window HWND cached on first `update`. Tray callbacks read this and
@@ -109,7 +109,7 @@ impl SettingsWindow {
         Self {
             state,
             hook,
-            _tray: tray,
+            tray,
             tab: Tab::General,
             icon_texture: Some(icon_texture),
             hwnd,
@@ -142,6 +142,7 @@ impl eframe::App for SettingsWindow {
             let state = self.state.lock().unwrap();
             state.ui_language.clone()
         };
+        self.tray.set_language(&ui_language);
 
         egui::SidePanel::left("navigation_view")
             .exact_width(160.0)
@@ -270,7 +271,8 @@ fn nav_icon(ui: &mut egui::Ui, tab: Tab, rect: egui::Rect, color: egui::Color32)
             }
         }
         Tab::About => {
-            ui.painter().circle_stroke(center, 7.5, egui::Stroke::new(1.25, color));
+            ui.painter()
+                .circle_stroke(center, 7.5, egui::Stroke::new(1.25, color));
             ui.painter().text(
                 center,
                 egui::Align2::CENTER_CENTER,
@@ -309,7 +311,7 @@ pub fn preference_content(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui
                         ui.set_max_width(ui.available_width());
                         add_contents(ui);
                     });
-            });
+                });
 
             ui.add_space(CONTENT_MARGIN);
         });
@@ -338,55 +340,77 @@ pub fn caption(ui: &mut egui::Ui, label: &str) {
 pub fn tr(language: &str, key: &'static str) -> &'static str {
     match language {
         "zh" => match key {
-            "General" => "\u{901A}\u{7528}",
-            "Shortcuts" => "\u{5FEB}\u{6377}\u{952E}",
-            "About" => "\u{5173}\u{4E8E}",
-            "Startup" => "\u{542F}\u{52A8}",
-            "Open at startup" => "\u{5F00}\u{673A}\u{542F}\u{52A8}",
-            "Start Slipkey automatically after sign-in." => "\u{767B}\u{5F55}\u{540E}\u{81EA}\u{52A8}\u{542F}\u{52A8} Slipkey\u{3002}",
-            "Language" => "\u{8BED}\u{8A00}",
-            "Display language" => "\u{663E}\u{793A}\u{8BED}\u{8A00}",
-            "Permissions" => "\u{6743}\u{9650}",
-            "Accessibility" => "\u{8F85}\u{52A9}\u{529F}\u{80FD}",
-            "Ready" => "\u{5DF2}\u{5C31}\u{7EEA}",
-            "Inactive" => "\u{672A}\u{542F}\u{7528}",
-            "Required to intercept the leader key before the active IME consumes it." => "\u{7528}\u{4E8E}\u{5728}\u{5F53}\u{524D}\u{8F93}\u{5165}\u{6CD5}\u{5904}\u{7406}\u{524D}\u{62E6}\u{622A}\u{5F15}\u{5BFC}\u{952E}\u{3002}",
-            "Leader key" => "\u{5F15}\u{5BFC}\u{952E}",
-            "Type this first, then a prefix such as ;en. Pick a rarely used key to avoid accidental triggers." => "\u{5148}\u{8F93}\u{5165}\u{5B83}\u{FF0C}\u{518D}\u{8F93}\u{5165}\u{5982} ;en \u{7684}\u{524D}\u{7F00}\u{3002}\u{5EFA}\u{8BAE}\u{9009}\u{62E9}\u{5C11}\u{7528}\u{952E}\u{4EE5}\u{907F}\u{514D}\u{8BEF}\u{89E6}\u{53D1}\u{3002}",
-            "Input sources" => "\u{8F93}\u{5165}\u{6E90}",
-            "LanguageHeader" => "\u{8BED}\u{8A00}",
-            "Prefix" => "\u{524D}\u{7F00}",
-            "Detect" => "\u{68C0}\u{6D4B}",
-            "Reset to defaults" => "\u{6062}\u{590D}\u{9ED8}\u{8BA4}",
-            "Save" => "\u{4FDD}\u{5B58}",
-            "Switch input methods by typing." => "\u{901A}\u{8FC7}\u{952E}\u{5165}\u{6765}\u{5207}\u{6362}\u{8F93}\u{5165}\u{6CD5}\u{3002}",
-            "View on GitHub" => "\u{5728} GitHub \u{4E0A}\u{67E5}\u{770B}",
+            "General" => "通用",
+            "Shortcuts" => "快捷键",
+            "About" => "关于",
+            "Startup" => "启动",
+            "Open at startup" => "开机启动",
+            "Start Slipkey automatically after sign-in." => "登录后自动启动 Slipkey。",
+            "Startup error" => "启动项错误",
+            "Language" => "语言",
+            "Display language" => "显示语言",
+            "Permissions" => "权限",
+            "Accessibility" => "辅助功能",
+            "Ready" => "已就绪",
+            "Inactive" => "未启用",
+            "Required to intercept the leader key before the active IME consumes it." => "用于在当前输入法处理前拦截引导键。",
+            "Leader key" => "引导键",
+            "Type this first, then a prefix such as ;en. Pick a rarely used key to avoid accidental triggers." => "先输入它，再输入如 ;en 的前缀。建议选择少用键以避免误触发。",
+            "Input sources" => "输入源",
+            "LanguageHeader" => "语言",
+            "Prefix" => "前缀",
+            "Detect" => "检测",
+            "Reset to defaults" => "恢复默认",
+            "Save" => "保存",
+            "Defaults restored. Click Save to apply." => "已恢复默认值。点击保存后生效。",
+            "Saved. Shortcuts are active now." => "已保存。快捷键已生效。",
+            "Save failed" => "保存失败",
+            "Prefixes can only contain letters and numbers." => "前缀只能包含字母和数字。",
+            "Prefixes must be unique." => "前缀必须唯一。",
+            "Prefixes cannot start with another configured prefix." => "前缀不能以另一个已配置的前缀开头。",
+            "Switch input methods by typing." => "通过键入来切换输入法。",
+            "Slipkey - Switch input methods by typing" => "Slipkey - 通过键入来切换输入法",
+            "Open Settings" => "打开设置",
+            "Quit Slipkey" => "退出 Slipkey",
+            "Version" => "版本",
+            "View on GitHub" => "在 GitHub 上查看",
             _ => key,
         },
         "ja" => match key {
-            "General" => "\u{4E00}\u{822C}",
-            "Shortcuts" => "\u{30B7}\u{30E7}\u{30FC}\u{30C8}\u{30AB}\u{30C3}\u{30C8}",
-            "About" => "\u{60C5}\u{5831}",
-            "Startup" => "\u{8D77}\u{52D5}",
-            "Open at startup" => "\u{8D77}\u{52D5}\u{6642}\u{306B}\u{958B}\u{304F}",
-            "Start Slipkey automatically after sign-in." => "\u{30B5}\u{30A4}\u{30F3}\u{30A4}\u{30F3}\u{5F8C}\u{306B} Slipkey \u{3092}\u{81EA}\u{52D5}\u{8D77}\u{52D5}\u{3057}\u{307E}\u{3059}\u{3002}",
-            "Language" => "\u{8A00}\u{8A9E}",
-            "Display language" => "\u{8868}\u{793A}\u{8A00}\u{8A9E}",
-            "Permissions" => "\u{6A29}\u{9650}",
-            "Accessibility" => "\u{30A2}\u{30AF}\u{30BB}\u{30B7}\u{30D3}\u{30EA}\u{30C6}\u{30A3}",
-            "Ready" => "\u{6E96}\u{5099}\u{5B8C}\u{4E86}",
-            "Inactive" => "\u{7121}\u{52B9}",
-            "Required to intercept the leader key before the active IME consumes it." => "\u{73FE}\u{5728}\u{306E} IME \u{304C}\u{51E6}\u{7406}\u{3059}\u{308B}\u{524D}\u{306B}\u{30EA}\u{30FC}\u{30C0}\u{30FC}\u{30AD}\u{30FC}\u{3092}\u{6355}\u{6349}\u{3059}\u{308B}\u{305F}\u{3081}\u{306B}\u{5FC5}\u{8981}\u{3067}\u{3059}\u{3002}",
-            "Leader key" => "\u{30EA}\u{30FC}\u{30C0}\u{30FC}\u{30AD}\u{30FC}",
-            "Type this first, then a prefix such as ;en. Pick a rarely used key to avoid accidental triggers." => "\u{5148}\u{306B}\u{3053}\u{308C}\u{3092}\u{5165}\u{529B}\u{3057}\u{3001}\u{6B21}\u{306B} ;en \u{306E}\u{3088}\u{3046}\u{306A}\u{30D7}\u{30EC}\u{30D5}\u{30A3}\u{30C3}\u{30AF}\u{30B9}\u{3092}\u{5165}\u{529B}\u{3057}\u{307E}\u{3059}\u{3002}",
-            "Input sources" => "\u{5165}\u{529B}\u{30BD}\u{30FC}\u{30B9}",
-            "LanguageHeader" => "\u{8A00}\u{8A9E}",
-            "Prefix" => "\u{30D7}\u{30EC}\u{30D5}\u{30A3}\u{30C3}\u{30AF}\u{30B9}",
-            "Detect" => "\u{691C}\u{51FA}",
-            "Reset to defaults" => "\u{65E2}\u{5B9A}\u{5024}\u{306B}\u{623B}\u{3059}",
-            "Save" => "\u{4FDD}\u{5B58}",
-            "Switch input methods by typing." => "\u{5165}\u{529B}\u{3057}\u{3066}\u{5165}\u{529B}\u{65B9}\u{5F0F}\u{3092}\u{5207}\u{308A}\u{66FF}\u{3048}\u{307E}\u{3059}\u{3002}",
-            "View on GitHub" => "GitHub \u{3067}\u{898B}\u{308B}",
+            "General" => "一般",
+            "Shortcuts" => "ショートカット",
+            "About" => "情報",
+            "Startup" => "起動",
+            "Open at startup" => "起動時に開く",
+            "Start Slipkey automatically after sign-in." => "サインイン後に Slipkey を自動起動します。",
+            "Startup error" => "起動項目エラー",
+            "Language" => "言語",
+            "Display language" => "表示言語",
+            "Permissions" => "権限",
+            "Accessibility" => "アクセシビリティ",
+            "Ready" => "準備完了",
+            "Inactive" => "無効",
+            "Required to intercept the leader key before the active IME consumes it." => "現在の IME が処理する前にリーダーキーを捕捉するために必要です。",
+            "Leader key" => "リーダーキー",
+            "Type this first, then a prefix such as ;en. Pick a rarely used key to avoid accidental triggers." => "先にこれを入力し、次に ;en のようなプレフィックスを入力します。",
+            "Input sources" => "入力ソース",
+            "LanguageHeader" => "言語",
+            "Prefix" => "プレフィックス",
+            "Detect" => "検出",
+            "Reset to defaults" => "既定値に戻す",
+            "Save" => "保存",
+            "Defaults restored. Click Save to apply." => "既定値に戻しました。保存すると適用されます。",
+            "Saved. Shortcuts are active now." => "保存しました。ショートカットは有効です。",
+            "Save failed" => "保存に失敗しました",
+            "Prefixes can only contain letters and numbers." => "プレフィックスに使えるのは英数字だけです。",
+            "Prefixes must be unique." => "プレフィックスは重複できません。",
+            "Prefixes cannot start with another configured prefix." => "プレフィックスは他の設定済みプレフィックスで始められません。",
+            "Switch input methods by typing." => "入力して入力方式を切り替えます。",
+            "Slipkey - Switch input methods by typing" => "Slipkey - 入力して入力方式を切り替え",
+            "Open Settings" => "設定を開く",
+            "Quit Slipkey" => "Slipkey を終了",
+            "Version" => "バージョン",
+            "View on GitHub" => "GitHub で見る",
             _ => key,
         },
         _ => key,
@@ -395,16 +419,16 @@ pub fn tr(language: &str, key: &'static str) -> &'static str {
 
 pub fn language_label(language: &str) -> &'static str {
     match language {
-        "zh" => "\u{4E2D}\u{6587}",
-        "ja" => "\u{65E5}\u{672C}\u{8A9E}",
+        "zh" => "中文",
+        "ja" => "日本語",
         _ => "English",
     }
 }
 
 pub fn mapping_language_label(language: &str) -> String {
     match language {
-        "zh" => "\u{4E2D}\u{6587}".to_string(),
-        "ja" => "\u{65E5}\u{672C}\u{8A9E}".to_string(),
+        "zh" => "中文".to_string(),
+        "ja" => "日本語".to_string(),
         "en" => "English".to_string(),
         other => other.to_string(),
     }
@@ -530,12 +554,7 @@ fn apply_win11_style(ctx: &egui::Context) {
     ctx.set_style(style);
 }
 
-fn register_font(
-    fonts: &mut egui::FontDefinitions,
-    name: &str,
-    paths: &[&str],
-    primary: bool,
-) {
+fn register_font(fonts: &mut egui::FontDefinitions, name: &str, paths: &[&str], primary: bool) {
     for path in paths {
         if let Ok(bytes) = std::fs::read(path) {
             fonts

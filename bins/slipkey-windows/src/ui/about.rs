@@ -29,9 +29,12 @@ pub fn show(ui: &mut egui::Ui, icon: Option<&egui::TextureHandle>, lang: &str) {
                     ui.add_space(4.0);
                     let version = env!("CARGO_PKG_VERSION");
                     ui.label(
-                        egui::RichText::new(format!("Version {version}  -  (c) 2026 oguri701"))
-                            .size(FONT_CAPTION)
-                            .color(WIN11_TEXT_SEC),
+                        egui::RichText::new(format!(
+                            "{} {version}  -  (c) 2026 oguri701",
+                            tr(lang, "Version")
+                        ))
+                        .size(FONT_CAPTION)
+                        .color(WIN11_TEXT_SEC),
                     );
                 });
             });

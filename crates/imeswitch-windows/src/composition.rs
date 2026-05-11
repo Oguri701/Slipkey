@@ -67,8 +67,6 @@ pub fn is_cjk_ime_active() -> bool {
         };
         let hkl = GetKeyboardLayout(tid);
         let langid = (hkl as usize) & 0xFFFF;
-        // 0x0411 Japanese, 0x0804 Chinese Simplified,
-        // 0x0404 Chinese Traditional, 0x0412 Korean
-        matches!(langid, 0x0411 | 0x0804 | 0x0404 | 0x0412)
+        crate::ime::detect::is_cjk_langid(langid as u32)
     }
 }

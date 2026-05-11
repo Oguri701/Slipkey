@@ -17,9 +17,7 @@ fn main() {
         eprintln!("Build the helper crate first, then copy the DLL into embed/:");
         eprintln!();
         eprintln!("  cargo build --release -p slipkey-tsf-helper --target x86_64-pc-windows-msvc");
-        eprintln!(
-            "  Copy-Item target/x86_64-pc-windows-msvc/release/slipkey_tsf_helper.dll \\"
-        );
+        eprintln!("  Copy-Item target/x86_64-pc-windows-msvc/release/slipkey_tsf_helper.dll \\");
         eprintln!("    bins/slipkey-windows/embed/slipkey_tsf.dll -Force");
         eprintln!();
         std::process::exit(1);

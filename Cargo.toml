@@ -6,12 +6,17 @@ members = [
     "crates/imeswitch-windows",
     "crates/slipkey-tsf-helper",
     "bins/slipkey-windows",
+    "xtask",
 ]
 
 [workspace.package]
-version = "0.1.5"
+version = "0.1.6"
 edition = "2021"
 rust-version = "1.75"
+description = "Typed input-method switching for macOS and Windows"
+license = "MIT"
+repository = "https://github.com/Oguri701/Slipkey"
+homepage = "https://github.com/Oguri701/Slipkey"
 
 [workspace.dependencies]
 imeswitch-core = { path = "crates/imeswitch-core" }

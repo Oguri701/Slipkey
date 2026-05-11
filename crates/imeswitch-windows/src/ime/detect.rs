@@ -79,6 +79,10 @@ pub fn detect_default_sources() -> Vec<SourceInfo> {
         .collect()
 }
 
+pub fn is_cjk_langid(langid: u32) -> bool {
+    matches!(primary_langid(langid), 0x04 | 0x11 | 0x12)
+}
+
 #[cfg(target_os = "windows")]
 fn langid_to_iso(langid: u32) -> String {
     match langid & 0xFFFF {
@@ -86,7 +90,7 @@ fn langid_to_iso(langid: u32) -> String {
         0x0411 => "ja".to_string(),
         0x0412 => "ko".to_string(),
         0x0804 | 0x0404 | 0x0C04 | 0x1404 => "zh".to_string(),
-        other => match other & 0x3FF {
+        other => match primary_langid(other) {
             0x09 => "en".to_string(),
             0x11 => "ja".to_string(),
             0x12 => "ko".to_string(),
@@ -94,6 +98,10 @@ fn langid_to_iso(langid: u32) -> String {
             _ => format!("{:04X}", langid),
         },
     }
+}
+
+fn primary_langid(langid: u32) -> u32 {
+    langid & 0x3FF
 }
 
 #[cfg(target_os = "windows")]
@@ -114,5 +122,19 @@ fn locale_language_name(langid: u32) -> String {
         String::from_utf16_lossy(&buf[..len as usize - 1])
     } else {
         format!("{:04X}", langid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cjk_langid_uses_primary_language_id() {
+        assert!(is_cjk_langid(0x0411)); // Japanese
+        assert!(is_cjk_langid(0x0804)); // Chinese Simplified
+        assert!(is_cjk_langid(0x0C04)); // Chinese Hong Kong
+        assert!(is_cjk_langid(0x0412)); // Korean
+        assert!(!is_cjk_langid(0x0409)); // English
     }
 }

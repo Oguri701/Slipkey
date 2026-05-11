@@ -12,6 +12,8 @@ use crate::keymap::leader_vk_for;
 #[serde(deny_unknown_fields)]
 pub struct Config {
     pub leader: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ui_language: Option<String>,
     pub mappings: Option<Vec<MappingConfig>>,
     // Legacy v1 per-language overrides (migrated to mappings on first load)
     pub en: Option<String>,
@@ -56,9 +58,7 @@ impl MappingConfig {
         // Alphanumeric entries (English) never need an HKL — discard any legacy source.
         let hkl_id = match mode {
             WinImeMode::Alphanumeric => None,
-            WinImeMode::Native | WinImeMode::LayoutOnly => {
-                self.source.filter(|s| !s.is_empty())
-            }
+            WinImeMode::Native | WinImeMode::LayoutOnly => self.source.filter(|s| !s.is_empty()),
         };
         Some(WinEntry {
             language: Language::from(self.language),
@@ -118,6 +118,7 @@ impl Config {
     pub fn from_mapping(mapping: &WinMapping) -> Self {
         Self {
             leader: Some(mapping.leader().to_string()),
+            ui_language: Some("en".to_string()),
             mappings: Some(
                 mapping
                     .entries()
@@ -128,6 +129,14 @@ impl Config {
             en: None,
             ja: None,
             zh: None,
+        }
+    }
+
+    pub fn normalized_ui_language(&self) -> String {
+        match self.ui_language.as_deref() {
+            Some("zh") => "zh".to_string(),
+            Some("ja") => "ja".to_string(),
+            _ => "en".to_string(),
         }
     }
 
@@ -305,7 +314,11 @@ source = "00000409"
             default.entry_for(&Language::from("en"))
         );
         assert_eq!(
-            mapping.entry_for(&Language::from("zh")).unwrap().hkl_id.as_deref(),
+            mapping
+                .entry_for(&Language::from("zh"))
+                .unwrap()
+                .hkl_id
+                .as_deref(),
             Some("E0200804")
         );
     }
@@ -319,6 +332,37 @@ source = "00000409"
     fn template_round_trips() {
         let parsed = toml::from_str::<Config>(&Config::template_toml()).unwrap();
         assert_eq!(parsed.into_mapping(), WinMapping::default());
+    }
+
+    #[test]
+    fn ui_language_round_trips() {
+        let config = toml::from_str::<Config>(
+            r#"
+leader = ";"
+ui_language = "zh"
+
+[[mappings]]
+language = "en"
+prefix = "en"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.normalized_ui_language(), "zh");
+
+        let text = toml::to_string_pretty(&config).unwrap();
+        assert!(text.contains(r#"ui_language = "zh""#));
+    }
+
+    #[test]
+    fn unsupported_ui_language_falls_back_to_english() {
+        let config = toml::from_str::<Config>(
+            r#"
+leader = ";"
+ui_language = "fr"
+"#,
+        )
+        .unwrap();
+        assert_eq!(config.normalized_ui_language(), "en");
     }
 
     #[test]

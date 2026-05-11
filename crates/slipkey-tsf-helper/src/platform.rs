@@ -10,11 +10,7 @@ use crate::{compartment, first_call_only};
 static EXECUTED: AtomicBool = AtomicBool::new(false);
 
 #[no_mangle]
-pub unsafe extern "system" fn call_wnd_hook(
-    code: i32,
-    wparam: WPARAM,
-    lparam: LPARAM,
-) -> LRESULT {
+pub unsafe extern "system" fn call_wnd_hook(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     // Windows convention: code < 0 means "must call CallNextHookEx and do nothing".
     if code >= 0 && first_call_only(&EXECUTED) {
         // Best-effort: log+swallow any panic so hook never propagates into the

@@ -111,9 +111,7 @@ rm -rf /Applications/Slipkey.app ~/.config/imeswitch
 ### 从源码构建
 
 ```bash
-cargo build --release -p slipkey-tsf-helper --target x86_64-pc-windows-msvc
-copy target\x86_64-pc-windows-msvc\release\slipkey_tsf_helper.dll bins\slipkey-windows\embed\slipkey_tsf.dll
-cargo build --release -p slipkey-windows --target x86_64-pc-windows-msvc
+cargo xtask build-windows
 ```
 
 构建产物：
@@ -322,14 +320,7 @@ rm -rf /Applications/Slipkey.app ~/.config/imeswitch
 ### Build from source
 
 ```bash
-# 1. Build the helper DLL first
-cargo build --release -p slipkey-tsf-helper --target x86_64-pc-windows-msvc
-
-# 2. Copy the DLL into embed/ so include_bytes! can read it
-copy target\x86_64-pc-windows-msvc\release\slipkey_tsf_helper.dll bins\slipkey-windows\embed\slipkey_tsf.dll
-
-# 3. Build Slipkey.exe with the helper DLL embedded
-cargo build --release -p slipkey-windows --target x86_64-pc-windows-msvc
+cargo xtask build-windows
 ```
 
 Build outputs:
@@ -376,6 +367,12 @@ source = "00000804"
 System input-method shortcuts are easy to forget, easy to mis-hit, and different across platforms. For multilingual users, a wrong input source is not a small mistake: it breaks the sentence, forces deletion and retyping, and interrupts the thought you were trying to capture.
 
 Typed switching makes input-source changes part of the writing flow. The trigger is visible, memorable, and consistent across macOS and Windows.
+
+| Approach | What you remember | Where it breaks | Slipkey difference |
+| --- | --- | --- | --- |
+| OS input-source shortcuts | A different hotkey per OS or machine | Conflicts with apps and is easy to mis-hit | Uses the same typed trigger on macOS and Windows |
+| Text expansion or app shortcuts | Text after the IME has handled it | CJK IMEs may compose or consume the trigger first | Reads key events before IME conversion |
+| Toolbar or menu selection | A visual target for each language | Slow and interrupts typing | Keeps switching inside the writing flow |
 
 ## Why Keycode-Level Detection
 

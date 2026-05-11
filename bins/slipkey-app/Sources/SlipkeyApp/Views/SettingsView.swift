@@ -117,10 +117,16 @@ struct GeneralSettingsView: View {
 
             PreferenceRow(label: L10n.text("Permissions", appState.uiLanguage)) {
                 HStack(spacing: 10) {
-                    Image(systemName: appState.accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
+                    Circle()
+                        .frame(width: 10, height: 10)
                         .foregroundStyle(appState.accessibilityGranted ? .green : .orange)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(appState.accessibilityGranted ? L10n.text("Ready", appState.uiLanguage) : L10n.text("Accessibility permission required", appState.uiLanguage))
+                        HStack(spacing: 6) {
+                            Text(L10n.text("Accessibility", appState.uiLanguage))
+                                .fontWeight(.medium)
+                            Text(appState.accessibilityGranted ? L10n.text("Ready", appState.uiLanguage) : L10n.text("Inactive", appState.uiLanguage))
+                                .foregroundStyle(appState.accessibilityGranted ? .green : .orange)
+                        }
                         Text(L10n.text("Needed to listen for typed shortcuts before the active input method converts them.", appState.uiLanguage))
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -133,6 +139,9 @@ struct GeneralSettingsView: View {
                         .controlSize(.small)
                     }
                 }
+            }
+            .onAppear {
+                appState.refreshAccessibilityStatus()
             }
 
         }

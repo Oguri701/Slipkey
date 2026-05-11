@@ -72,7 +72,7 @@ pub fn find_installed_layout(
 pub fn load_or_find_layout(
     id: &str,
 ) -> Result<windows_sys::Win32::UI::Input::KeyboardAndMouse::HKL, SwitchError> {
-    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{KLF_ACTIVATE, LoadKeyboardLayoutW};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{LoadKeyboardLayoutW, KLF_ACTIVATE};
 
     if let Some(hkl) = find_installed_layout(id) {
         return Ok(hkl);
@@ -100,7 +100,9 @@ pub fn switch_layout_sync(
     use windows_sys::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_INPUTLANGCHANGEREQUEST};
 
     if hwnd.is_null() {
-        log::warn!("switch_layout_sync: focused window is null, skipping synchronous layout message");
+        log::warn!(
+            "switch_layout_sync: focused window is null, skipping synchronous layout message"
+        );
         return Ok(());
     }
     unsafe { SendMessageW(hwnd, WM_INPUTLANGCHANGEREQUEST, 0 as WPARAM, hkl as LPARAM) };
@@ -110,12 +112,10 @@ pub fn switch_layout_sync(
 /// Broadcast a layout change to all top-level windows asynchronously.
 /// This updates the taskbar IME indicator and notifies other applications.
 #[cfg(target_os = "windows")]
-pub fn broadcast_layout_change(
-    hkl: windows_sys::Win32::UI::Input::KeyboardAndMouse::HKL,
-) {
+pub fn broadcast_layout_change(hkl: windows_sys::Win32::UI::Input::KeyboardAndMouse::HKL) {
     use windows_sys::Win32::Foundation::{LPARAM, WPARAM};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        HWND_BROADCAST, PostMessageW, WM_INPUTLANGCHANGEREQUEST,
+        PostMessageW, HWND_BROADCAST, WM_INPUTLANGCHANGEREQUEST,
     };
     unsafe {
         PostMessageW(
@@ -128,9 +128,7 @@ pub fn broadcast_layout_change(
 }
 
 #[cfg(target_os = "windows")]
-pub fn format_hkl(
-    hkl: windows_sys::Win32::UI::Input::KeyboardAndMouse::HKL,
-) -> String {
+pub fn format_hkl(hkl: windows_sys::Win32::UI::Input::KeyboardAndMouse::HKL) -> String {
     format!("{:08X}", (hkl as usize) & 0xFFFF_FFFF)
 }
 

@@ -14,16 +14,22 @@ pub struct AppState {
 
 impl AppState {
     pub fn load() -> Self {
-        let (mapping, _outcome) = load_or_default();
+        let (mapping, outcome) = load_or_default();
         let detected_sources = detect_default_sources();
-        let config = merge_detected_sources(Config::from_mapping(&mapping), &detected_sources);
+        let base_config = match outcome {
+            imeswitch_windows::config::LoadOutcome::Loaded { config, .. }
+            | imeswitch_windows::config::LoadOutcome::Migrated { config, .. } => config,
+            _ => Config::from_mapping(&mapping),
+        };
+        let ui_language = base_config.normalized_ui_language();
+        let config = merge_detected_sources(base_config, &detected_sources);
         AppState {
             config,
             detected_sources,
             status_message: String::new(),
             hook_active: false,
             launch_at_login: crate::startup::is_enabled(),
-            ui_language: "en".to_string(),
+            ui_language,
         }
     }
 }
@@ -108,13 +114,10 @@ pub fn merge_detected_sources(mut config: Config, sources: &[SourceInfo]) -> Con
         });
     }
 
-    for entry in existing
-        .iter()
-        .filter(|entry| {
-            !matches!(entry.language.as_str(), "en" | "ja" | "zh")
-                && !detected_languages.contains(&entry.language)
-        })
-    {
+    for entry in existing.iter().filter(|entry| {
+        !matches!(entry.language.as_str(), "en" | "ja" | "zh")
+            && !detected_languages.contains(&entry.language)
+    }) {
         rows.push(entry.clone());
     }
 
@@ -138,6 +141,7 @@ mod tests {
     fn merge_preserves_custom_non_detected_mappings() {
         let config = Config {
             leader: Some(";".to_string()),
+            ui_language: None,
             mappings: Some(vec![
                 MappingConfig {
                     language: "en".to_string(),
@@ -168,6 +172,7 @@ mod tests {
     fn merge_updates_detected_language_without_duplicating_existing_row() {
         let config = Config {
             leader: Some(";".to_string()),
+            ui_language: None,
             mappings: Some(vec![MappingConfig {
                 language: "ja".to_string(),
                 prefix: "jp".to_string(),
