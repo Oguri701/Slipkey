@@ -1,0 +1,2 @@
+# Helper DLL bytes are staged here by the build workflow.
+*.dll
