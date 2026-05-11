@@ -1,3 +1,9 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::Duration;
+
 use eframe::egui;
 use tray_icon::{menu::MenuEvent, TrayIconEvent};
 
@@ -46,6 +52,7 @@ pub struct SettingsWindow {
     _tray: Tray,
     tab: Tab,
     icon_texture: Option<egui::TextureHandle>,
+    open_requested: Arc<AtomicBool>,
 }
 
 impl SettingsWindow {
@@ -66,21 +73,22 @@ impl SettingsWindow {
         );
 
         let ctx_for_tray = cc.egui_ctx.clone();
+        let open_requested = Arc::new(AtomicBool::new(false));
+        let tray_open_requested = open_requested.clone();
         TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
             if let TrayIconEvent::Click { .. } = event {
-                ctx_for_tray.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                ctx_for_tray.send_viewport_cmd(egui::ViewportCommand::Focus);
+                tray_open_requested.store(true, Ordering::SeqCst);
                 ctx_for_tray.request_repaint();
             }
         }));
 
         let ctx_for_menu = cc.egui_ctx.clone();
+        let menu_open_requested = open_requested.clone();
         let open_id = tray.open_id.clone();
         let quit_id = tray.quit_id.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             if event.id == open_id {
-                ctx_for_menu.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                ctx_for_menu.send_viewport_cmd(egui::ViewportCommand::Focus);
+                menu_open_requested.store(true, Ordering::SeqCst);
                 ctx_for_menu.request_repaint();
             } else if event.id == quit_id {
                 std::process::exit(0);
@@ -93,15 +101,23 @@ impl SettingsWindow {
             _tray: tray,
             tab: Tab::General,
             icon_texture: Some(icon_texture),
+            open_requested,
         }
     }
 }
 
 impl eframe::App for SettingsWindow {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.request_repaint_after(Duration::from_millis(250));
+
         if ctx.input(|input| input.viewport().close_requested()) {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+
+        if self.open_requested.swap(false, Ordering::SeqCst) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
 
         let ui_language = {
