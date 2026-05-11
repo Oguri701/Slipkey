@@ -65,8 +65,10 @@ jobs:
       - name: Test Rust workspace
         run: cargo test --workspace
 
-      - name: Build Slipkey.exe
-        run: cargo build --release -p slipkey-windows
+      - name: Build Slipkey.exe and helper DLL
+        run: |
+          cargo build --release -p slipkey-windows
+          cargo build --release -p slipkey-tsf-helper
 
       - name: Package Windows artifact
         shell: pwsh
@@ -74,7 +76,11 @@ jobs:
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
           New-Item -ItemType Directory -Force -Path dist | Out-Null
           Copy-Item target/release/Slipkey.exe dist/Slipkey.exe
-          Compress-Archive -Path dist/Slipkey.exe -DestinationPath "dist/Slipkey-$version-windows-x64.zip" -Force
+          Copy-Item target/release/slipkey_tsf_helper.dll dist/slipkey_tsf.dll
+          Compress-Archive `
+            -Path dist/Slipkey.exe, dist/slipkey_tsf.dll `
+            -DestinationPath "dist/Slipkey-$version-windows-x64.zip" `
+            -Force
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
