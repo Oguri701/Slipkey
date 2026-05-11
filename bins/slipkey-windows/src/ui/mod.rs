@@ -5,7 +5,7 @@ use std::sync::{
 
 use eframe::egui;
 use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-use tray_icon::{menu::MenuEvent, TrayIconEvent};
+use tray_icon::{menu::MenuEvent, MouseButton, MouseButtonState, TrayIconEvent};
 
 use crate::app::SharedState;
 use crate::hook_thread::HookHandle;
@@ -85,7 +85,12 @@ impl SettingsWindow {
 
         let tray_hwnd = hwnd.clone();
         TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
-            if let TrayIconEvent::Click { .. } = event {
+            if let TrayIconEvent::Click {
+                button: MouseButton::Left,
+                button_state: MouseButtonState::Up,
+                ..
+            } = event
+            {
                 show_main_window(tray_hwnd.load(Ordering::SeqCst));
             }
         }));
