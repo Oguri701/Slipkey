@@ -4,6 +4,7 @@ members = [
     "crates/imeswitch-core",
     "crates/imeswitch-tsf-protocol",
     "crates/imeswitch-windows",
+    "crates/slipkey-tsf-helper",
     "bins/slipkey-windows",
 ]
 
