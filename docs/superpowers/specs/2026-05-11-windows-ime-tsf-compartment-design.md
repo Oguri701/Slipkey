@@ -113,6 +113,11 @@
 
 ```
 crates/
+  imeswitch-tsf-protocol/   ← 新增 micro-crate（仅 ~50 行类型定义）
+    src/
+      lib.rs                ← TsfCommand / TsfResult / ABI_VERSION / 命名函数
+    Cargo.toml              ← 零外部依赖
+
   imeswitch-windows/
     src/
       ime/
@@ -120,15 +125,16 @@ crates/
         layout.rs           ← 保留（HKL 切换稳定）
         detect.rs           ← 保留
         tsf_dispatch.rs     ← 新增（替代 mode.rs 的角色）
-        tsf_protocol.rs     ← 新增（共享内存结构体）
-    Cargo.toml
+    Cargo.toml              ← 新增 imeswitch-tsf-protocol 依赖
 
   slipkey-tsf-helper/       ← 新增 crate
     src/
       lib.rs                ← DllMain + hook proc
       compartment.rs        ← TSF Compartment 操作
-    Cargo.toml              ← crate-type = ["cdylib"]
+    Cargo.toml              ← crate-type = ["cdylib"]; 依赖 imeswitch-tsf-protocol
 ```
+
+**为什么 protocol 单独成 crate**：helper DLL 只需要协议类型定义，不应该传递依赖到整个 `imeswitch-windows`（避免概念上的循环依赖、控制 DLL 体积）。micro-crate 模式让 ABI 边界一目了然。
 
 ### 删除清单
 
@@ -140,11 +146,11 @@ crates/
 
 ## 组件职责
 
-### 1. `imeswitch-windows::ime::tsf_protocol`
+### 1. `imeswitch-tsf-protocol`（micro-crate）
 
 **职责**：定义主进程与 helper DLL 之间的共享内存协议。纯类型定义，无任何 Windows API 调用。
 
-**为什么独立成模块**：两边（EXE 和 DLL）都要 `#[repr(C)]` 严格对齐。放在一个文件里避免漂移。
+**为什么独立成 crate**：两边（EXE 和 DLL）都要 `#[repr(C)]` 严格对齐；放在共享 crate 里避免漂移。DLL 不需要传递依赖整个 `imeswitch-windows`。
 
 **关键类型**：
 
@@ -213,7 +219,7 @@ pub enum DispatchError {
 }
 ```
 
-**依赖**：`windows-sys`（`SetWindowsHookEx`、`PostThreadMessageW`、`WaitForSingleObject`、`CreateFileMappingW`、`CreateEventW`、`MapViewOfFile`）、`tsf_protocol`。
+**依赖**：`windows-sys`（`SetWindowsHookEx`、`PostThreadMessageW`、`WaitForSingleObject`、`CreateFileMappingW`、`CreateEventW`、`MapViewOfFile`）、`imeswitch-tsf-protocol`。
 
 ### 3. `slipkey-tsf-helper`（cdylib）
 
@@ -237,7 +243,7 @@ pub enum DispatchError {
 
 **依赖**：
 - `windows`（COM TSF 接口的 idiomatic 绑定）
-- `imeswitch-windows::ime::tsf_protocol`（仅类型）
+- `imeswitch-tsf-protocol`（仅类型）
 
 **为什么用 `windows` 而不是 `windows-sys`**：TSF COM 接口在 `windows` crate 里有自动 IUnknown 引用计数和 `Result<>`。DLL cdylib 会 dead-strip，体积影响 < 5KB。
 
@@ -353,8 +359,8 @@ fn switch_entry(entry: &WinEntry) -> Result<(), SwitchError> {
 
 每步独立可提交、可回滚：
 
-1. **新增** `crates/slipkey-tsf-helper` 空 crate（cdylib 配置 + 最小 `DllMain`）
-2. **新增** `imeswitch-windows::ime::tsf_protocol`（纯类型 + 单测）
+1. **新增** `crates/imeswitch-tsf-protocol` micro-crate（纯类型 + 单测）
+2. **新增** `crates/slipkey-tsf-helper` 空 crate（cdylib 配置 + 最小 `DllMain`）
 3. **实现** `slipkey-tsf-helper::compartment` 的 TSF Compartment 写入
 4. **实现** `imeswitch-windows::ime::tsf_dispatch::TsfDispatcher`
 5. **修改** `ime::mod::switch_entry` 改用 `TsfDispatcher`
