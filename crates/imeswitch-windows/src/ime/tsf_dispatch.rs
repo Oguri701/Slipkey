@@ -121,7 +121,7 @@ mod platform {
         ABI_VERSION, DISPATCH_TIMEOUT_MS, HOST_PID_ENV_VAR,
     };
     use windows_sys::Win32::Foundation::{
-        CloseHandle, GetLastError, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        CloseHandle, GetLastError, HANDLE, HWND, WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::System::Environment::SetEnvironmentVariableW;
     use windows_sys::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
@@ -131,8 +131,9 @@ mod platform {
     };
     use windows_sys::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, PostThreadMessageW,
-        SetWindowsHookExW, UnhookWindowsHookEx, GUITHREADINFO, WH_CALLWNDPROC, WM_NULL,
+        GetForegroundWindow, GetGUIThreadInfo, GetWindowThreadProcessId, SendMessageTimeoutW,
+        SetWindowsHookExW, UnhookWindowsHookEx, GUITHREADINFO, SMTO_ABORTIFHUNG, WH_CALLWNDPROC,
+        WM_NULL,
     };
 
     pub(super) fn dispatch_impl(
@@ -140,7 +141,7 @@ mod platform {
         sequence: u32,
         target: TsfTarget,
     ) -> Result<(), DispatchError> {
-        let tid = focused_thread_id().ok_or(DispatchError::NoFocusWindow)?;
+        let focus = focused_target().ok_or(DispatchError::NoFocusWindow)?;
         let host_pid = std::process::id();
 
         let pid_name = wide(&host_pid_memory_name());
@@ -254,7 +255,7 @@ mod platform {
                 WH_CALLWNDPROC,
                 Some(std::mem::transmute(hook_proc)),
                 helper_hmod,
-                tid,
+                focus.thread_id,
             )
         };
         if hook.is_null() {
@@ -264,8 +265,17 @@ mod platform {
             return Err(DispatchError::InjectionRefused(err));
         }
 
+        let mut send_result = 0usize;
         unsafe {
-            let _ = PostThreadMessageW(tid, WM_NULL, 0, 0);
+            let _ = SendMessageTimeoutW(
+                focus.hwnd,
+                WM_NULL,
+                0,
+                0,
+                SMTO_ABORTIFHUNG,
+                50,
+                &mut send_result,
+            );
         }
 
         let wait_rc = unsafe { WaitForSingleObject(event_handle, DISPATCH_TIMEOUT_MS) };
@@ -295,7 +305,12 @@ mod platform {
         outcome
     }
 
-    fn focused_thread_id() -> Option<u32> {
+    struct FocusTarget {
+        hwnd: HWND,
+        thread_id: u32,
+    }
+
+    fn focused_target() -> Option<FocusTarget> {
         unsafe {
             let foreground = GetForegroundWindow();
             if foreground.is_null() {
@@ -310,10 +325,16 @@ mod platform {
             if GetGUIThreadInfo(fg_tid, &mut info) != 0 && !info.hwndFocus.is_null() {
                 let focused_tid = GetWindowThreadProcessId(info.hwndFocus, std::ptr::null_mut());
                 if focused_tid != 0 {
-                    return Some(focused_tid);
+                    return Some(FocusTarget {
+                        hwnd: info.hwndFocus,
+                        thread_id: focused_tid,
+                    });
                 }
             }
-            Some(fg_tid)
+            Some(FocusTarget {
+                hwnd: foreground,
+                thread_id: fg_tid,
+            })
         }
     }
 
