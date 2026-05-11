@@ -65,20 +65,29 @@ jobs:
       - name: Test Rust workspace
         run: cargo test --workspace
 
-      - name: Build Slipkey.exe and helper DLL
-        run: |
-          cargo build --release -p slipkey-windows
-          cargo build --release -p slipkey-tsf-helper
+      - name: Build helper DLL
+        run: cargo build --release -p slipkey-tsf-helper --target x86_64-pc-windows-msvc
 
-      - name: Package Windows artifact
+      - name: Stage helper DLL into embed/
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path bins/slipkey-windows/embed | Out-Null
+          Copy-Item `
+            target/x86_64-pc-windows-msvc/release/slipkey_tsf_helper.dll `
+            bins/slipkey-windows/embed/slipkey_tsf.dll `
+            -Force
+
+      - name: Build Slipkey.exe (with embedded DLL)
+        run: cargo build --release -p slipkey-windows --target x86_64-pc-windows-msvc
+
+      - name: Package Windows artifact (single file)
         shell: pwsh
         run: |
           $version = $env:GITHUB_REF_NAME.TrimStart("v")
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/release/Slipkey.exe dist/Slipkey.exe
-          Copy-Item target/release/slipkey_tsf_helper.dll dist/slipkey_tsf.dll
+          Copy-Item target/x86_64-pc-windows-msvc/release/Slipkey.exe dist/Slipkey.exe
           Compress-Archive `
-            -Path dist/Slipkey.exe, dist/slipkey_tsf.dll `
+            -Path dist/Slipkey.exe `
             -DestinationPath "dist/Slipkey-$version-windows-x64.zip" `
             -Force
 
