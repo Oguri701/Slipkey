@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::OnceLock;
+use std::sync::OnceLock as StdOnceLock;
 
 use crate::ime::WinImeMode;
 
@@ -63,19 +63,24 @@ pub struct TsfDispatcher {
     helper_dll_path: PathBuf,
 }
 
+/// Static slot for the resolved helper DLL path. Must be `set()` by the host
+/// app before the first call to `tsf_dispatch::global()`.
+static DLL_PATH: StdOnceLock<PathBuf> = StdOnceLock::new();
+
+/// Inject the path that `TsfDispatcher` should use when injecting the helper
+/// DLL via `SetWindowsHookEx`. Call this from `main()` after provisioning.
+pub fn set_helper_dll_path(path: PathBuf) {
+    let _ = DLL_PATH.set(path);
+}
+
 impl TsfDispatcher {
-    pub fn new() -> Result<Self, DispatchError> {
-        let exe_dir = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(PathBuf::from))
-            .ok_or(DispatchError::System(0))?;
-        let dll = exe_dir.join("slipkey_tsf.dll");
-        if !dll.exists() {
-            return Err(DispatchError::DllNotFound(dll));
+    pub fn new_with_path(helper_dll_path: PathBuf) -> Result<Self, DispatchError> {
+        if !helper_dll_path.exists() {
+            return Err(DispatchError::DllNotFound(helper_dll_path));
         }
         Ok(Self {
             next_sequence: AtomicU32::new(1),
-            helper_dll_path: dll,
+            helper_dll_path,
         })
     }
 
@@ -100,13 +105,25 @@ impl TsfDispatcher {
 /// Lazily-initialized global dispatcher. Returns None if the helper DLL is
 /// missing from the install directory; caller logs and skips the TSF step.
 pub fn global() -> Option<&'static TsfDispatcher> {
-    static INSTANCE: OnceLock<Option<TsfDispatcher>> = OnceLock::new();
+    static INSTANCE: StdOnceLock<Option<TsfDispatcher>> = StdOnceLock::new();
     INSTANCE
-        .get_or_init(|| match TsfDispatcher::new() {
-            Ok(d) => Some(d),
-            Err(e) => {
-                log::warn!("TsfDispatcher disabled: {:?}", e);
-                None
+        .get_or_init(|| {
+            let path = match DLL_PATH.get().cloned() {
+                Some(p) => p,
+                None => {
+                    log::warn!(
+                        "TsfDispatcher disabled: helper DLL path not set \
+                         (call set_helper_dll_path() from main before first dispatch)"
+                    );
+                    return None;
+                }
+            };
+            match TsfDispatcher::new_with_path(path) {
+                Ok(d) => Some(d),
+                Err(e) => {
+                    log::warn!("TsfDispatcher disabled: {:?}", e);
+                    None
+                }
             }
         })
         .as_ref()
