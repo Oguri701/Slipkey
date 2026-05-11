@@ -1,15 +1,21 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicIsize, Ordering},
     Arc,
 };
-use std::time::Duration;
 
 use eframe::egui;
+use raw_window_handle::{HasWindowHandle, RawWindowHandle};
 use tray_icon::{menu::MenuEvent, TrayIconEvent};
 
 use crate::app::SharedState;
 use crate::hook_thread::HookHandle;
 use crate::tray::Tray;
+
+#[cfg(target_os = "windows")]
+use windows_sys::Win32::{
+    Foundation::HWND,
+    UI::WindowsAndMessaging::{SetForegroundWindow, ShowWindow, SW_HIDE, SW_SHOWNORMAL},
+};
 
 pub mod about;
 pub mod general;
@@ -52,7 +58,10 @@ pub struct SettingsWindow {
     _tray: Tray,
     tab: Tab,
     icon_texture: Option<egui::TextureHandle>,
-    open_requested: Arc<AtomicBool>,
+    /// Main window HWND cached on first `update`. Tray callbacks read this and
+    /// call Win32 ShowWindow directly, bypassing eframe's update loop entirely
+    /// (which would otherwise be stuck when the window is hidden).
+    hwnd: Arc<AtomicIsize>,
 }
 
 impl SettingsWindow {
@@ -72,24 +81,21 @@ impl SettingsWindow {
             egui::TextureOptions::default(),
         );
 
-        let ctx_for_tray = cc.egui_ctx.clone();
-        let open_requested = Arc::new(AtomicBool::new(false));
-        let tray_open_requested = open_requested.clone();
+        let hwnd = Arc::new(AtomicIsize::new(0));
+
+        let tray_hwnd = hwnd.clone();
         TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
             if let TrayIconEvent::Click { .. } = event {
-                tray_open_requested.store(true, Ordering::SeqCst);
-                ctx_for_tray.request_repaint();
+                show_main_window(tray_hwnd.load(Ordering::SeqCst));
             }
         }));
 
-        let ctx_for_menu = cc.egui_ctx.clone();
-        let menu_open_requested = open_requested.clone();
+        let menu_hwnd = hwnd.clone();
         let open_id = tray.open_id.clone();
         let quit_id = tray.quit_id.clone();
         MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
             if event.id == open_id {
-                menu_open_requested.store(true, Ordering::SeqCst);
-                ctx_for_menu.request_repaint();
+                show_main_window(menu_hwnd.load(Ordering::SeqCst));
             } else if event.id == quit_id {
                 std::process::exit(0);
             }
@@ -101,23 +107,30 @@ impl SettingsWindow {
             _tray: tray,
             tab: Tab::General,
             icon_texture: Some(icon_texture),
-            open_requested,
+            hwnd,
         }
     }
 }
 
 impl eframe::App for SettingsWindow {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        ctx.request_repaint_after(Duration::from_millis(250));
-
-        if ctx.input(|input| input.viewport().close_requested()) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // Cache the HWND once eframe has actually created the window so tray
+        // callbacks can act on it from any thread without going through the
+        // update loop (which stalls while the window is hidden).
+        if self.hwnd.load(Ordering::SeqCst) == 0 {
+            if let Ok(handle) = frame.window_handle() {
+                if let RawWindowHandle::Win32(w) = handle.as_raw() {
+                    self.hwnd.store(w.hwnd.get() as isize, Ordering::SeqCst);
+                }
+            }
         }
 
-        if self.open_requested.swap(false, Ordering::SeqCst) {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        if ctx.input(|input| input.viewport().close_requested()) {
+            // Keep the window alive (just hidden) so it can be re-shown later.
+            // The close event itself triggers this update tick, so calling
+            // Win32 ShowWindow here is safe and synchronous.
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            hide_main_window(self.hwnd.load(Ordering::SeqCst));
         }
 
         let ui_language = {
@@ -391,6 +404,41 @@ pub fn mapping_language_label(language: &str) -> String {
         other => other.to_string(),
     }
 }
+
+/// Show the settings window from any thread.
+///
+/// `SW_SHOWNORMAL` activates the window and also restores it if minimized,
+/// so the same call covers "hidden -> visible" and "minimized -> normal".
+/// `SetForegroundWindow` is allowed here because the call originates from a
+/// user click on the tray icon / menu, which Windows treats as user-initiated
+/// foreground activation (no anti-stealing block).
+#[cfg(target_os = "windows")]
+fn show_main_window(hwnd: isize) {
+    if hwnd == 0 {
+        return;
+    }
+    let hwnd = hwnd as HWND;
+    unsafe {
+        ShowWindow(hwnd, SW_SHOWNORMAL);
+        SetForegroundWindow(hwnd);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn hide_main_window(hwnd: isize) {
+    if hwnd == 0 {
+        return;
+    }
+    unsafe {
+        ShowWindow(hwnd as HWND, SW_HIDE);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn show_main_window(_hwnd: isize) {}
+
+#[cfg(not(target_os = "windows"))]
+fn hide_main_window(_hwnd: isize) {}
 
 fn apply_win11_style(ctx: &egui::Context) {
     let mut fonts = egui::FontDefinitions::default();
