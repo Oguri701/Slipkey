@@ -1336,6 +1336,10 @@ name = "imeswitch-core"
 version = "0.1.4"
 
 [[package]]
+name = "imeswitch-tsf-protocol"
+version = "0.1.4"
+
+[[package]]
 name = "imeswitch-windows"
 version = "0.1.4"
 dependencies = [
