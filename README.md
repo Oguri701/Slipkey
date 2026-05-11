@@ -111,15 +111,15 @@ rm -rf /Applications/Slipkey.app ~/.config/imeswitch
 ### 从源码构建
 
 ```bash
-cargo build --release -p slipkey-windows --target x86_64-pc-windows-msvc
 cargo build --release -p slipkey-tsf-helper --target x86_64-pc-windows-msvc
+copy target\x86_64-pc-windows-msvc\release\slipkey_tsf_helper.dll bins\slipkey-windows\embed\slipkey_tsf.dll
+cargo build --release -p slipkey-windows --target x86_64-pc-windows-msvc
 ```
 
 构建产物：
 
 ```text
 target/x86_64-pc-windows-msvc/release/Slipkey.exe
-target/x86_64-pc-windows-msvc/release/slipkey_tsf_helper.dll  (rename to slipkey_tsf.dll)
 ```
 
 ### 配置文件
@@ -305,23 +305,37 @@ rm -rf /Applications/Slipkey.app ~/.config/imeswitch
 ### Install
 
 1. Download `Slipkey-*-windows-x64.zip` from [Releases](https://github.com/Oguri701/Slipkey/releases/latest)
-2. Unzip it and run `Slipkey.exe`
-3. Right-click the tray icon and open **Settings**
-4. Configure shortcuts in **Shortcuts**
-5. Enable **Launch at login** in **General** if desired
+2. Unzip it and get a single `Slipkey.exe` (put it anywhere)
+3. Double-click `Slipkey.exe`
+4. Right-click the tray icon and open **Settings**
+5. Configure shortcuts in **Shortcuts**
+6. Enable **Launch at login** in **General** if desired
+
+> On first run, Slipkey provisions a helper file at
+> `%LOCALAPPDATA%\Slipkey\slipkey_tsf.dll` for TSF-level IME mode switching
+> (specifically for Microsoft Japanese IME's alphanumeric mode). Slipkey
+> manages this file automatically.
+>
+> Windows SmartScreen may show "Windows protected your PC" on first run because
+> Slipkey is not yet code-signed. Click **More info** -> **Run anyway**.
 
 ### Build from source
 
 ```bash
-cargo build --release -p slipkey-windows --target x86_64-pc-windows-msvc
+# 1. Build the helper DLL first
 cargo build --release -p slipkey-tsf-helper --target x86_64-pc-windows-msvc
+
+# 2. Copy the DLL into embed/ so include_bytes! can read it
+copy target\x86_64-pc-windows-msvc\release\slipkey_tsf_helper.dll bins\slipkey-windows\embed\slipkey_tsf.dll
+
+# 3. Build Slipkey.exe with the helper DLL embedded
+cargo build --release -p slipkey-windows --target x86_64-pc-windows-msvc
 ```
 
 Build outputs:
 
 ```text
 target/x86_64-pc-windows-msvc/release/Slipkey.exe
-target/x86_64-pc-windows-msvc/release/slipkey_tsf_helper.dll  (rename to slipkey_tsf.dll)
 ```
 
 ### Config
@@ -354,7 +368,8 @@ source = "00000804"
 1. Quit Slipkey from the tray menu
 2. Delete `Slipkey.exe`
 3. Delete `%APPDATA%\imeswitch\`
-4. Optionally remove `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Slipkey`
+4. Delete `%LOCALAPPDATA%\Slipkey\`
+5. Optionally remove `HKCU\Software\Microsoft\Windows\CurrentVersion\Run\Slipkey`
 
 ## Why Typed Switching
 
@@ -385,7 +400,9 @@ crates/
   imeswitch-tsf-protocol/ Shared ABI between Slipkey.exe and slipkey_tsf.dll
   imeswitch-windows/      Windows hook + HKL + TSF dispatch
   slipkey-tsf-helper/     Short-lived cdylib injected into focused GUI
-                          thread for authoritative TSF Compartment writes
+                          thread for authoritative TSF Compartment writes;
+                          embedded into Slipkey.exe and provisioned to
+                          %LOCALAPPDATA%\Slipkey\slipkey_tsf.dll
 ```
 
 ### Two-Stage Switching on Windows
