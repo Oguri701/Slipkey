@@ -75,16 +75,16 @@ fn install(
     std::sync::Arc<std::sync::Mutex<imeswitch_windows::ime::WindowsImeSwitcher>>,
 ) {
     use imeswitch_windows::ime::WindowsImeSwitcher;
-    use imeswitch_windows::keymap::{leader_vk_for, VK_SEMICOLON};
+    use imeswitch_windows::keymap::{leader_scan_code_for, SC_SEMICOLON};
 
     let config = state.lock().unwrap().config.clone();
     let mapping = config.into_mapping();
-    let leader_vk = leader_vk_for(mapping.leader()).unwrap_or(VK_SEMICOLON);
+    let leader_scan_code = leader_scan_code_for(mapping.leader()).unwrap_or(SC_SEMICOLON);
     let switcher = std::sync::Arc::new(std::sync::Mutex::new(WindowsImeSwitcher::with_mapping(
         mapping.clone(),
     )));
     let hook = imeswitch_windows::hook::EventHook::install_with_mappings(
-        leader_vk,
+        leader_scan_code,
         mapping.trigger_mappings(),
         switcher.clone(),
     )

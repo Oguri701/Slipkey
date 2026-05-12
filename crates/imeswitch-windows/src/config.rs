@@ -6,7 +6,7 @@ use imeswitch_core::Language;
 use serde::{Deserialize, Serialize};
 
 use crate::ime::{WinEntry, WinImeMode, WinMapping, DEFAULT_LEADER};
-use crate::keymap::leader_vk_for;
+use crate::keymap::leader_scan_code_for;
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -74,7 +74,7 @@ impl Config {
         self.leader
             .as_deref()
             .and_then(|s| s.chars().next())
-            .filter(|c| leader_vk_for(*c).is_some())
+            .filter(|c| leader_scan_code_for(*c).is_some())
             .unwrap_or(DEFAULT_LEADER)
     }
 

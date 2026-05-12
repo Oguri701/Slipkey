@@ -18,7 +18,7 @@ env_logger.workspace = true
 egui = "0.31"
 eframe = { version = "0.31", default-features = false, features = ["default_fonts", "glow"] }
 tray-icon = "0.21"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 open = "5"
 raw-window-handle = "0.6"
 sha2 = "0.10"

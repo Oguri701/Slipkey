@@ -374,6 +374,13 @@ pub fn tr(language: &str, key: &'static str) -> &'static str {
             "Quit Slipkey" => "退出 Slipkey",
             "Version" => "版本",
             "View on GitHub" => "在 GitHub 上查看",
+            "Support author" => "支持作者",
+            "WeChat" => "微信",
+            "QR code unavailable" => "二维码不可用",
+            "The support image was not included in this build." => "这个构建中未包含支持作者图片。",
+            "If Slipkey helped you, welcome to buy the author a coffee." => {
+                "如果 Slipkey 帮到了你，欢迎请作者喝杯咖啡。"
+            }
             _ => key,
         },
         "ja" => match key {
@@ -411,6 +418,15 @@ pub fn tr(language: &str, key: &'static str) -> &'static str {
             "Quit Slipkey" => "Slipkey を終了",
             "Version" => "バージョン",
             "View on GitHub" => "GitHub で見る",
+            "Support author" => "作者を支援",
+            "WeChat" => "WeChat",
+            "QR code unavailable" => "QR コードを表示できません",
+            "The support image was not included in this build." => {
+                "このビルドには支援用画像が含まれていません。"
+            }
+            "If Slipkey helped you, welcome to buy the author a coffee." => {
+                "Slipkey が役に立ったら、作者にコーヒーをごちそうしていただけるとうれしいです。"
+            }
             _ => key,
         },
         _ => key,
@@ -508,10 +524,14 @@ fn apply_win11_style(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 
     let mut style = (*ctx.style()).clone();
+    style.visuals = egui::Visuals::light();
     style.visuals.window_fill = WIN11_SURFACE;
     style.visuals.panel_fill = WIN11_BG;
     style.visuals.window_stroke = egui::Stroke::NONE;
     style.visuals.override_text_color = Some(WIN11_TEXT);
+    style.visuals.extreme_bg_color = WIN11_SURFACE;
+    style.visuals.faint_bg_color = WIN11_BG;
+    style.visuals.code_bg_color = WIN11_SURFACE;
     style.visuals.selection.bg_fill = WIN11_ACCENT;
     style.visuals.selection.stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
     style.visuals.hyperlink_color = WIN11_ACCENT;

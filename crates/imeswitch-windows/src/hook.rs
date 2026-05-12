@@ -9,27 +9,27 @@ use std::time::{Duration, Instant};
 use imeswitch_core::{Key, Language, StateMachine};
 use windows_sys::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
 use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP,
-    VK_BACK, VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_LCONTROL, VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU,
-    VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT, VK_SPACE,
+    GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_EXTENDEDKEY,
+    KEYEVENTF_KEYUP, KEYEVENTF_SCANCODE, VK_BACK, VK_CONTROL, VK_DELETE, VK_ESCAPE, VK_LCONTROL,
+    VK_LMENU, VK_LSHIFT, VK_LWIN, VK_MENU, VK_RCONTROL, VK_RMENU, VK_RSHIFT, VK_RWIN, VK_SHIFT,
+    VK_SPACE,
 };
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, GetMessageW, SetWindowsHookExW, UnhookWindowsHookEx, HC_ACTION, HHOOK,
-    KBDLLHOOKSTRUCT, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
+    KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, WH_KEYBOARD_LL, WM_KEYDOWN, WM_SYSKEYDOWN,
 };
 
 use crate::composition::{is_cjk_ime_active, is_composing};
 use crate::ime::{WinMapping, WindowsImeSwitcher};
 use crate::keymap::{
-    is_leader_key_event, key_to_vk_with_leader, leader_vk_for, vk_to_key_event_with_leader,
-    VK_SEMICOLON,
+    is_leader_key_event, leader_scan_code_for, vk_to_key_event_with_leader, SC_SEMICOLON,
 };
 
 const REPLAY_MAGIC: usize = 0x696d_6573_7769_6e36;
 const COMPOSITION_IDLE_THRESHOLD: Duration = Duration::from_millis(500);
 
 static HOOK_STATE: Mutex<Option<HookState>> = Mutex::new(None);
-static LEADER_VK: AtomicU32 = AtomicU32::new(VK_SEMICOLON);
+static LEADER_SCAN_CODE: AtomicU32 = AtomicU32::new(SC_SEMICOLON);
 static HOOK_IDLE: AtomicBool = AtomicBool::new(true);
 
 #[derive(Debug)]
@@ -60,6 +60,15 @@ struct HookState {
     switcher: Arc<Mutex<WindowsImeSwitcher>>,
     possible_composition: bool,
     last_keydown: Option<Instant>,
+    pending_replay: Vec<ReplayKey>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ReplayKey {
+    key: Key,
+    vk: u32,
+    scan_code: u32,
+    flags: u32,
 }
 
 /// Installs a low-level keyboard hook on the current thread's message loop and
@@ -79,7 +88,7 @@ impl EventHook {
     /// Install the hook. `switcher` is shared with the caller so
     /// `update_config` can swap the mapping without reinstalling.
     pub fn install_with_mappings<I>(
-        leader_vk: u32,
+        leader_scan_code: u32,
         mappings: I,
         switcher: Arc<Mutex<WindowsImeSwitcher>>,
     ) -> Result<Self, HookError>
@@ -91,13 +100,14 @@ impl EventHook {
             if guard.is_some() {
                 return Err(HookError::AlreadyInstalled);
             }
-            LEADER_VK.store(leader_vk, Ordering::Relaxed);
+            LEADER_SCAN_CODE.store(leader_scan_code, Ordering::Relaxed);
             HOOK_IDLE.store(true, Ordering::Relaxed);
             *guard = Some(HookState {
                 sm: StateMachine::from_mappings(mappings),
                 switcher,
                 possible_composition: false,
                 last_keydown: None,
+                pending_replay: Vec::new(),
             });
         }
 
@@ -122,13 +132,14 @@ impl EventHook {
     pub fn update_config(&self, mapping: &WinMapping) {
         if let Some(state) = HOOK_STATE.lock().unwrap().as_mut() {
             state.sm = StateMachine::from_mappings(mapping.trigger_mappings());
-            LEADER_VK.store(
-                leader_vk_for(mapping.leader()).unwrap_or(VK_SEMICOLON),
+            LEADER_SCAN_CODE.store(
+                leader_scan_code_for(mapping.leader()).unwrap_or(SC_SEMICOLON),
                 Ordering::Relaxed,
             );
             HOOK_IDLE.store(true, Ordering::Relaxed);
             state.possible_composition = false;
             state.last_keydown = None;
+            state.pending_replay.clear();
         }
     }
 }
@@ -141,7 +152,7 @@ impl Drop for EventHook {
             }
         }
         *HOOK_STATE.lock().unwrap() = None;
-        LEADER_VK.store(VK_SEMICOLON, Ordering::Relaxed);
+        LEADER_SCAN_CODE.store(SC_SEMICOLON, Ordering::Relaxed);
         HOOK_IDLE.store(true, Ordering::Relaxed);
     }
 }
@@ -180,8 +191,13 @@ unsafe extern "system" fn low_level_keyboard_proc(
 }
 
 fn handle_keydown(vk: u32, scan_code: u32, flags: u32) -> Result<bool, HookError> {
-    let leader_vk = LEADER_VK.load(Ordering::Relaxed);
-    if should_passthrough_idle_key(vk, scan_code, leader_vk, HOOK_IDLE.load(Ordering::Relaxed)) {
+    let leader_scan_code = LEADER_SCAN_CODE.load(Ordering::Relaxed);
+    if should_passthrough_idle_key(
+        vk,
+        scan_code,
+        leader_scan_code,
+        HOOK_IDLE.load(Ordering::Relaxed),
+    ) {
         return Ok(false);
     }
 
@@ -192,21 +208,21 @@ fn handle_keydown(vk: u32, scan_code: u32, flags: u32) -> Result<bool, HookError
     // Clone the Arc while holding the HOOK_STATE lock, then release the lock
     // before calling switch_to. This prevents deadlock when update_config
     // locks switcher first and then HOOK_STATE.
-    let (response, leader_vk, switcher_arc) = {
+    let (response, replay_keys, switcher_arc) = {
         let mut guard = HOOK_STATE.lock().unwrap();
         let state = guard.as_mut().ok_or(HookError::StateUnavailable)?;
         let recently_typed = state
             .last_keydown
             .map(|last| now.duration_since(last) < COMPOSITION_IDLE_THRESHOLD)
             .unwrap_or(false);
-        let is_leader_key = is_leader_key_event(vk, scan_code, leader_vk);
+        let is_leader_key = is_leader_key_event(scan_code, leader_scan_code);
         let should_defer = should_defer_to_ime(
             state.sm.is_idle(),
             is_leader_key,
             composing,
             state.possible_composition,
             recently_typed,
-            is_composition_ending_key(vk, leader_vk),
+            is_composition_ending_key(vk),
         );
 
         log::debug!(
@@ -225,27 +241,27 @@ fn handle_keydown(vk: u32, scan_code: u32, flags: u32) -> Result<bool, HookError
         if should_defer {
             state.last_keydown = Some(now);
             HOOK_IDLE.store(true, Ordering::Relaxed);
-            update_possible_composition(state, true, Key::Other, vk, leader_vk, false);
+            update_possible_composition(state, true, Key::Other, vk, false);
             return Ok(false);
         }
 
         let key = if has_mod {
             Key::Other
         } else {
-            vk_to_key_event_with_leader(vk, scan_code, leader_vk)
+            vk_to_key_event_with_leader(vk, scan_code, leader_scan_code)
+        };
+        let current_replay_key = ReplayKey {
+            key,
+            vk,
+            scan_code,
+            flags,
         };
         let response = state.sm.on_keydown(key);
+        let replay_keys = update_pending_replay(state, current_replay_key, &response);
         state.last_keydown = Some(now);
         let is_idle = state.sm.is_idle();
         HOOK_IDLE.store(is_idle, Ordering::Relaxed);
-        update_possible_composition(
-            state,
-            composing,
-            key,
-            vk,
-            leader_vk,
-            response.switch.is_some(),
-        );
+        update_possible_composition(state, composing, key, vk, response.switch.is_some());
 
         log::debug!(
             "  -> key={:?} suppress={} replay={:?} switch={:?}",
@@ -256,7 +272,7 @@ fn handle_keydown(vk: u32, scan_code: u32, flags: u32) -> Result<bool, HookError
         );
 
         let switcher_arc = state.switcher.clone();
-        (response, leader_vk, switcher_arc)
+        (response, replay_keys, switcher_arc)
     };
 
     if let Some(ref lang) = response.switch {
@@ -265,23 +281,51 @@ fn handle_keydown(vk: u32, scan_code: u32, flags: u32) -> Result<bool, HookError
         }
     }
 
-    for key in &response.replay {
-        if let Some(vk) = key_to_vk_with_leader(*key, leader_vk) {
-            send_key(vk);
-        }
+    for replay_key in replay_keys {
+        send_replay_key(replay_key);
     }
 
     Ok(response.suppress)
 }
 
-fn should_passthrough_idle_key(vk: u32, scan_code: u32, leader_vk: u32, is_idle: bool) -> bool {
+fn update_pending_replay(
+    state: &mut HookState,
+    current: ReplayKey,
+    response: &imeswitch_core::Response,
+) -> Vec<ReplayKey> {
+    let replay_count = response.replay.len();
+    let replay = if replay_count == 0 {
+        Vec::new()
+    } else if replay_count <= state.pending_replay.len() {
+        state.pending_replay.drain(..replay_count).collect()
+    } else {
+        std::mem::take(&mut state.pending_replay)
+    };
+
+    if response.switch.is_some() {
+        state.pending_replay.clear();
+    } else if response.suppress {
+        state.pending_replay.push(current);
+    } else if replay_count > 0 {
+        state.pending_replay.clear();
+    }
+
+    replay
+}
+
+fn should_passthrough_idle_key(
+    vk: u32,
+    scan_code: u32,
+    leader_scan_code: u32,
+    is_idle: bool,
+) -> bool {
     is_idle
-        && !is_leader_key_event(vk, scan_code, leader_vk)
+        && !is_leader_key_event(scan_code, leader_scan_code)
         && matches!(
-            vk_to_key_event_with_leader(vk, scan_code, leader_vk),
+            vk_to_key_event_with_leader(vk, scan_code, leader_scan_code),
             Key::Other
         )
-        && !is_composition_ending_key(vk, leader_vk)
+        && !is_composition_ending_key(vk)
 }
 
 fn has_blocking_modifier() -> bool {
@@ -307,10 +351,9 @@ fn update_possible_composition(
     composing: bool,
     key: Key,
     vk: u32,
-    leader_vk: u32,
     did_switch: bool,
 ) {
-    if did_switch || is_composition_ending_key(vk, leader_vk) {
+    if did_switch || is_composition_ending_key(vk) {
         state.possible_composition = false;
     } else if composing || key == Key::Other {
         state.possible_composition = true;
@@ -337,7 +380,7 @@ fn should_defer_to_ime(
     is_composing || (possible_composition && recently_typed && !is_composition_ending_key)
 }
 
-fn is_composition_ending_key(vk: u32, _leader_vk: u32) -> bool {
+fn is_composition_ending_key(vk: u32) -> bool {
     matches!(
         vk,
         x if x == VK_SPACE as u32
@@ -351,6 +394,7 @@ fn is_composition_ending_key(vk: u32, _leader_vk: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use imeswitch_core::Response;
 
     #[test]
     fn leader_key_starts_trigger_even_during_composition() {
@@ -374,22 +418,17 @@ mod tests {
 
     #[test]
     fn idle_other_non_leader_can_skip_heavy_hook_path() {
-        assert!(should_passthrough_idle_key(0x70, 0x3b, VK_SEMICOLON, true));
+        assert!(should_passthrough_idle_key(0x70, 0x3b, SC_SEMICOLON, true));
     }
 
     #[test]
     fn idle_alphanumeric_non_leader_keeps_composition_bookkeeping() {
-        assert!(!should_passthrough_idle_key(0x41, 0x1e, VK_SEMICOLON, true));
+        assert!(!should_passthrough_idle_key(0x41, 0x1e, SC_SEMICOLON, true));
     }
 
     #[test]
     fn idle_leader_cannot_skip_heavy_hook_path() {
-        assert!(!should_passthrough_idle_key(
-            VK_SEMICOLON,
-            0x27,
-            VK_SEMICOLON,
-            true
-        ));
+        assert!(!should_passthrough_idle_key(0xBA, 0x27, SC_SEMICOLON, true));
     }
 
     #[test]
@@ -397,14 +436,69 @@ mod tests {
         assert!(!should_passthrough_idle_key(
             0x41,
             0x1e,
-            VK_SEMICOLON,
+            SC_SEMICOLON,
             false
         ));
     }
+
+    #[test]
+    fn replay_keeps_original_scan_code_for_japanese_semicolon() {
+        let mut state = HookState {
+            sm: StateMachine::new(),
+            switcher: Arc::new(Mutex::new(WindowsImeSwitcher::new())),
+            possible_composition: false,
+            last_keydown: None,
+            pending_replay: vec![ReplayKey {
+                key: Key::Leader,
+                vk: 0xBB,
+                scan_code: 0x27,
+                flags: 0,
+            }],
+        };
+
+        let replay = update_pending_replay(
+            &mut state,
+            ReplayKey {
+                key: Key::AlphaNum('x'),
+                vk: 0x58,
+                scan_code: 0x2d,
+                flags: 0,
+            },
+            &Response {
+                suppress: false,
+                replay: vec![Key::Leader],
+                switch: None,
+            },
+        );
+
+        assert_eq!(replay[0].vk, 0xBB);
+        assert_eq!(replay[0].scan_code, 0x27);
+        assert!(state.pending_replay.is_empty());
+    }
+
+    #[test]
+    fn replay_uses_scan_code_input_flags() {
+        assert_eq!(replay_flags(0), KEYEVENTF_SCANCODE);
+        assert_eq!(
+            replay_flags(LLKHF_EXTENDED),
+            KEYEVENTF_SCANCODE | KEYEVENTF_EXTENDEDKEY
+        );
+    }
 }
 
-fn send_key(vk: u32) {
-    let mut inputs = [keyboard_input(vk, 0), keyboard_input(vk, KEYEVENTF_KEYUP)];
+fn send_replay_key(key: ReplayKey) {
+    log::debug!(
+        "replay key={:?} vk={:#04x} scan={:#04x} flags={:#04x}",
+        key.key,
+        key.vk,
+        key.scan_code,
+        key.flags
+    );
+    let flags = replay_flags(key.flags);
+    let mut inputs = [
+        keyboard_input(key.scan_code, flags),
+        keyboard_input(key.scan_code, flags | KEYEVENTF_KEYUP),
+    ];
     unsafe {
         SendInput(
             inputs.len() as u32,
@@ -414,13 +508,21 @@ fn send_key(vk: u32) {
     }
 }
 
-fn keyboard_input(vk: u32, flags: u32) -> INPUT {
+fn replay_flags(hook_flags: u32) -> u32 {
+    let mut flags = KEYEVENTF_SCANCODE;
+    if hook_flags & LLKHF_EXTENDED != 0 {
+        flags |= KEYEVENTF_EXTENDEDKEY;
+    }
+    flags
+}
+
+fn keyboard_input(scan_code: u32, flags: u32) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
         Anonymous: INPUT_0 {
             ki: KEYBDINPUT {
-                wVk: vk as u16,
-                wScan: 0,
+                wVk: 0,
+                wScan: scan_code as u16,
                 dwFlags: flags,
                 time: 0,
                 dwExtraInfo: REPLAY_MAGIC,
