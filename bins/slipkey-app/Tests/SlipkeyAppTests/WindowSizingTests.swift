@@ -7,9 +7,10 @@ import XCTest
 /// goes wrong on tab switch" family of bugs:
 ///
 /// 1. `WindowManager.clampToScreen` refuses to propagate runaway heights.
-/// 2. `SettingsContent` uses `.fixedSize(horizontal: false, vertical: true)`
-///    so SwiftUI cannot propose a parent-sized height down through the
-///    alignment frame and create a feedback loop with GeometryReader.
+/// 2. The displayed `SettingsContent` must not self-measure through
+///    `GeometryReader`/preferences. Measuring the live hosted view was the
+///    source of the feedback loop where parent-proposed height came back as
+///    content height.
 /// 3. `WindowManager.lastAppliedContentHeight` de-dups identical reports
 ///    so a tab switch can't kick off two overlapping animations and snap
 ///    instead of glide.
@@ -35,11 +36,10 @@ final class WindowSizingTests: XCTestCase {
         XCTAssertGreaterThanOrEqual(WindowManager.clampToScreen(500), 200)
     }
 
-    func test_settings_content_pins_vertical_size_via_fixedSize() throws {
-        // `.fixedSize(horizontal: false, vertical: true)` is what stops
-        // SwiftUI from proposing the NSHostingView's full height down to
-        // the alignment frame. If a future refactor drops it the
-        // Shortcuts-tab feedback loop comes back.
+    func test_settings_content_does_not_self_measure_displayed_view() throws {
+        // The displayed view must not report its own frame back to AppKit.
+        // The stable design is: AppKit asks an isolated fitting host for
+        // the selected tab's intrinsic height, then resizes the window.
         let url = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // SlipkeyAppTests
             .deletingLastPathComponent() // Tests
@@ -47,9 +47,35 @@ final class WindowSizingTests: XCTestCase {
             .appendingPathComponent("Sources/SlipkeyApp/Views/SettingsView.swift")
         let src = try String(contentsOf: url, encoding: .utf8)
 
-        XCTAssertTrue(
-            src.contains(".fixedSize(horizontal: false, vertical: true)"),
-            "SettingsContent must pin its vertical size with .fixedSize so the GeometryReader can't measure an inflated frame"
-        )
+        XCTAssertFalse(src.contains("GeometryReader"))
+        XCTAssertFalse(src.contains("ContentHeightKey"))
+        XCTAssertFalse(src.contains("onPreferenceChange"))
+    }
+
+    func test_window_manager_owns_height_measurement_outside_display_tree() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // SlipkeyAppTests
+            .deletingLastPathComponent() // Tests
+            .deletingLastPathComponent() // slipkey-app
+            .appendingPathComponent("Sources/SlipkeyApp/App/WindowManager.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+
+        XCTAssertTrue(src.contains("SettingsContentFitter"))
+        XCTAssertFalse(src.contains("onContentHeight"))
+    }
+
+    func test_content_fitter_returns_compact_heights_for_all_tabs() {
+        let appState = AppState()
+        appState.detectedSources = [
+            InputSource(language: "en", sourceID: "com.apple.keylayout.ABC", name: "ABC", isSelectable: true),
+            InputSource(language: "ja", sourceID: "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese", name: "Japanese - Romaji", isSelectable: true),
+            InputSource(language: "zh", sourceID: "com.apple.inputmethod.SCIM.Shuangpin", name: "Simplified Chinese - Shuangpin", isSelectable: true)
+        ]
+
+        for section in SettingsSection.allCases {
+            let height = SettingsContentFitter.contentHeight(for: appState, section: section, width: 450)
+            XCTAssertGreaterThan(height, 50, "\(section.rawValue) should have a real intrinsic height")
+            XCTAssertLessThan(height, 500, "\(section.rawValue) should not measure as a screen-height tab")
+        }
     }
 }

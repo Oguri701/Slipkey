@@ -36,6 +36,7 @@ jobs:
           cp bins/slipkey-app/Info.plist "$APP_PATH/Contents/Info.plist"
           cp "$SWIFT_SCRATCH/release/$APP_NAME" "$APP_PATH/Contents/MacOS/$APP_NAME"
           cp bins/slipkey-app/Resources/icon.icns "$APP_PATH/Contents/Resources/icon.icns"
+          cp bins/slipkey-app/Resources/wechat-support.jpeg "$APP_PATH/Contents/Resources/wechat-support.jpeg"
           chmod +x "$APP_PATH/Contents/MacOS/$APP_NAME"
 
           /usr/libexec/PlistBuddy -c "Set :CFBundleExecutable $APP_NAME" "$APP_PATH/Contents/Info.plist"

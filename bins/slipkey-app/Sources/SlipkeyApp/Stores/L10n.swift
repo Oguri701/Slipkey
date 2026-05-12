@@ -39,7 +39,13 @@ enum L10n {
             "Type this first, then a prefix such as ;en. Pick a rarely used key to avoid accidental triggers.": "\u{5148}\u{8F93}\u{5165}\u{5B83}\u{FF0C}\u{518D}\u{8F93}\u{5165}\u{5982} ;en \u{7684}\u{524D}\u{7F00}\u{3002}\u{5EFA}\u{8BAE}\u{9009}\u{62E9}\u{5C11}\u{7528}\u{952E}\u{4EE5}\u{907F}\u{514D}\u{8BEF}\u{89E6}\u{53D1}\u{3002}",
             "Input sources": "\u{8F93}\u{5165}\u{6E90}",
             "Switch input methods by typing.": "\u{901A}\u{8FC7}\u{952E}\u{5165}\u{6765}\u{5207}\u{6362}\u{8F93}\u{5165}\u{6CD5}\u{3002}",
-            "View on GitHub": "\u{5728} GitHub \u{4E0A}\u{67E5}\u{770B}"
+            "View on GitHub": "\u{5728} GitHub \u{4E0A}\u{67E5}\u{770B}",
+            "Support author": "\u{652F}\u{6301}\u{4F5C}\u{8005}",
+            "WeChat": "\u{5FAE}\u{4FE1}",
+            "Close": "\u{5173}\u{95ED}",
+            "QR code unavailable": "\u{4E8C}\u{7EF4}\u{7801}\u{4E0D}\u{53EF}\u{7528}",
+            "The support image was not included in this build.": "\u{8FD9}\u{4E2A}\u{6784}\u{5EFA}\u{4E2D}\u{672A}\u{5305}\u{542B}\u{652F}\u{6301}\u{4F5C}\u{8005}\u{56FE}\u{7247}\u{3002}",
+            "If Slipkey helped you, welcome to buy the author a coffee.": "\u{5982}\u{679C} Slipkey \u{5E2E}\u{5230}\u{4E86}\u{4F60}\u{FF0C}\u{6B22}\u{8FCE}\u{8BF7}\u{4F5C}\u{8005}\u{559D}\u{676F}\u{5496}\u{5561}\u{3002}"
         ],
         "ja": [
             "General": "\u{4E00}\u{822C}",
@@ -76,7 +82,13 @@ enum L10n {
             "Type this first, then a prefix such as ;en. Pick a rarely used key to avoid accidental triggers.": "\u{5148}\u{306B}\u{3053}\u{308C}\u{3092}\u{5165}\u{529B}\u{3057}\u{3001}\u{6B21}\u{306B} ;en \u{306E}\u{3088}\u{3046}\u{306A}\u{30D7}\u{30EC}\u{30D5}\u{30A3}\u{30C3}\u{30AF}\u{30B9}\u{3092}\u{5165}\u{529B}\u{3057}\u{307E}\u{3059}\u{3002}\u{8AA4}\u{52D5}\u{4F5C}\u{3092}\u{907F}\u{3051}\u{308B}\u{305F}\u{3081}\u{3001}\u{3042}\u{307E}\u{308A}\u{4F7F}\u{308F}\u{306A}\u{3044}\u{30AD}\u{30FC}\u{304C}\u{304A}\u{3059}\u{3059}\u{3081}\u{3067}\u{3059}\u{3002}",
             "Input sources": "\u{5165}\u{529B}\u{30BD}\u{30FC}\u{30B9}",
             "Switch input methods by typing.": "\u{5165}\u{529B}\u{3057}\u{3066}\u{5165}\u{529B}\u{30BD}\u{30FC}\u{30B9}\u{3092}\u{5207}\u{308A}\u{66FF}\u{3048}\u{307E}\u{3059}\u{3002}",
-            "View on GitHub": "GitHub \u{3067}\u{8868}\u{793A}"
+            "View on GitHub": "GitHub \u{3067}\u{8868}\u{793A}",
+            "Support author": "\u{4F5C}\u{8005}\u{3092}\u{652F}\u{63F4}",
+            "WeChat": "WeChat",
+            "Close": "\u{9589}\u{3058}\u{308B}",
+            "QR code unavailable": "QR \u{30B3}\u{30FC}\u{30C9}\u{3092}\u{8868}\u{793A}\u{3067}\u{304D}\u{307E}\u{305B}\u{3093}",
+            "The support image was not included in this build.": "\u{3053}\u{306E}\u{30D3}\u{30EB}\u{30C9}\u{306B}\u{306F}\u{652F}\u{63F4}\u{7528}\u{753B}\u{50CF}\u{304C}\u{542B}\u{307E}\u{308C}\u{3066}\u{3044}\u{307E}\u{305B}\u{3093}\u{3002}",
+            "If Slipkey helped you, welcome to buy the author a coffee.": "Slipkey \u{304C}\u{5F79}\u{306B}\u{7ACB}\u{3063}\u{305F}\u{3089}\u{3001}\u{4F5C}\u{8005}\u{306B}\u{30B3}\u{30FC}\u{30D2}\u{30FC}\u{3092}\u{3054}\u{3061}\u{305D}\u{3046}\u{3057}\u{3066}\u{3044}\u{305F}\u{3060}\u{3051}\u{308B}\u{3068}\u{3046}\u{308C}\u{3057}\u{3044}\u{3067}\u{3059}\u{3002}"
         ]
     ]
 }

@@ -3,53 +3,29 @@ import SwiftUI
 
 private let kGitHubURL = URL(string: "https://github.com/Oguri701/Slipkey")!
 
-private struct ContentHeightKey: PreferenceKey {
-    static let defaultValue: CGFloat = 0
-    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
-        value = nextValue()
-    }
-}
-
 struct SettingsContent: View {
     @ObservedObject var appState: AppState
     @ObservedObject var tabState: SettingsTabState
 
     var body: some View {
-        Group {
-            switch tabState.selection {
-            case .general:
-                GeneralSettingsView(appState: appState)
-            case .shortcuts:
-                ShortcutSettingsView(appState: appState)
-            case .about:
-                AboutSettingsView(appState: appState)
-            }
-        }
-        // Pin the view's vertical extent to its fitting size.
-        //
-        // Without this, the outer `.frame(maxWidth: .infinity, alignment:
-        // .top)` is allowed to grow taller than its child whenever
-        // SwiftUI proposes the NSHostingView's full content area down
-        // (which it does during the layout flurry triggered by a tab
-        // switch + the Shortcuts tab's `onAppear { refreshDetectedSources()
-        // }`). The GeometryReader inside the frame's background then
-        // reports that inflated height back to WindowManager and the
-        // window grows — a feedback loop that produced the
-        // vertical-screen-tall Shortcuts tab in 0.1.1.
-        //
-        // Putting `fixedSize` on the inside guarantees the view always
-        // takes its intrinsic height regardless of the proposal, so the
-        // GeometryReader can only ever report the real content height.
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .top)
-        .background(
-            GeometryReader { geo in
-                Color.clear.preference(key: ContentHeightKey.self, value: geo.size.height)
-            }
-        )
-        .onPreferenceChange(ContentHeightKey.self) { height in
-            guard height > 10 else { return }
-            tabState.onContentHeight?(height)
+        SettingsTabContent(appState: appState, selection: tabState.selection, refreshOnAppear: true)
+            .frame(maxWidth: .infinity, alignment: .top)
+    }
+}
+
+struct SettingsTabContent: View {
+    @ObservedObject var appState: AppState
+    let selection: SettingsSection
+    var refreshOnAppear = true
+
+    var body: some View {
+        switch selection {
+        case .general:
+            GeneralSettingsView(appState: appState)
+        case .shortcuts:
+            ShortcutSettingsView(appState: appState, refreshOnAppear: refreshOnAppear)
+        case .about:
+            AboutSettingsView(appState: appState)
         }
     }
 }
@@ -150,6 +126,7 @@ struct GeneralSettingsView: View {
 
 struct ShortcutSettingsView: View {
     @ObservedObject var appState: AppState
+    var refreshOnAppear = true
 
     var body: some View {
         PreferenceContent {
@@ -205,7 +182,9 @@ struct ShortcutSettingsView: View {
             }
         }
         .onAppear {
-            appState.refreshDetectedSources()
+            if refreshOnAppear {
+                appState.refreshDetectedSources()
+            }
         }
     }
 }
@@ -338,6 +317,7 @@ struct SourceMenu: View {
 
 struct AboutSettingsView: View {
     @ObservedObject var appState: AppState
+    @State private var showingSupportSheet = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -373,15 +353,91 @@ struct AboutSettingsView: View {
                         .frame(minWidth: 110)
                 }
                 .controlSize(.regular)
+                Button {
+                    showingSupportSheet = true
+                } label: {
+                    Text(L10n.text("Support author", appState.uiLanguage))
+                        .frame(minWidth: 96)
+                }
+                .controlSize(.regular)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 12)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+        .sheet(isPresented: $showingSupportSheet) {
+            SupportAuthorSheet(appState: appState)
+        }
     }
 
     private func appVersion() -> String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1.0"
+    }
+}
+
+struct SupportAuthorSheet: View {
+    @ObservedObject var appState: AppState
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 16) {
+            ZStack {
+                Text(L10n.text("WeChat", appState.uiLanguage))
+                    .font(.title3.weight(.semibold))
+                    .frame(maxWidth: .infinity)
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .symbolRenderingMode(.hierarchical)
+                        .font(.system(size: 18))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(L10n.text("Close", appState.uiLanguage))
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+
+            if let qrImage {
+                Image(nsImage: qrImage)
+                    .resizable()
+                    .interpolation(.none)
+                    .scaledToFit()
+                    .frame(width: 260, height: 260)
+                    .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(Color(nsColor: .separatorColor), lineWidth: 0.5)
+                    )
+            } else {
+                VStack(spacing: 8) {
+                    Image(systemName: "qrcode")
+                        .font(.system(size: 40))
+                        .foregroundStyle(.secondary)
+                    Text(L10n.text("QR code unavailable", appState.uiLanguage))
+                        .font(.headline)
+                    Text(L10n.text("The support image was not included in this build.", appState.uiLanguage))
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(width: 260, height: 220)
+            }
+
+            Text(L10n.text("If Slipkey helped you, welcome to buy the author a coffee.", appState.uiLanguage))
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(24)
+        .frame(width: 340)
+    }
+
+    private var qrImage: NSImage? {
+        guard let url = Bundle.main.url(forResource: "wechat-support", withExtension: "jpeg") else {
+            return nil
+        }
+        return NSImage(contentsOf: url)
     }
 }
 

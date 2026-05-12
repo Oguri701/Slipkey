@@ -7,7 +7,7 @@ final class WindowManager: NSObject, NSWindowDelegate, NSToolbarDelegate {
     private let appState: AppState
     private let tabState = SettingsTabState()
     private var settingsWindow: NSWindow?
-    private var languageObserver: AnyCancellable?
+    private var cancellables: Set<AnyCancellable> = []
     private var isInitialDisplay = true
     /// Last height we already animated to. SwiftUI may report the same
     /// height several times per layout pass (especially on a tab switch
@@ -55,32 +55,24 @@ final class WindowManager: NSObject, NSWindowDelegate, NSToolbarDelegate {
 
         window.center()
 
-        tabState.onContentHeight = { [weak self, weak window] height in
-            guard let self, let window, height > 10 else { return }
-            // Safety net: if SwiftUI ever reports an inflated content
-            // height (we hit a feedback loop in 0.1.1 where the height
-            // grew every Shortcuts repaint), refuse to grow the window
-            // beyond the visible screen area.
-            let clamped = Self.clampToScreen(height)
-            // De-dup repeated reports of the same height so a tab switch
-            // can't kick off two overlapping animations and snap the
-            // window instead of gliding it.
-            if abs(clamped - self.lastAppliedContentHeight) < 1.0 { return }
-            self.lastAppliedContentHeight = clamped
-            if self.isInitialDisplay {
-                self.isInitialDisplay = false
-                self.snapHeight(window: window, to: clamped)
-            } else {
-                self.animate(window: window, toContentHeight: clamped)
+        tabState.$selection
+            .dropFirst()
+            .sink { [weak self, weak window] section in
+                toolbar.selectedItemIdentifier = NSToolbarItem.Identifier(section.rawValue)
+                self?.scheduleResize(window: window, animated: true)
             }
-        }
+            .store(in: &cancellables)
 
-        languageObserver = appState.objectWillChange.sink { [weak self, weak window] in
+        appState.objectWillChange.sink { [weak self, weak window] in
             DispatchQueue.main.async {
-                self?.refreshToolbarLabels(in: window?.toolbar)
+                guard let self else { return }
+                self.refreshToolbarLabels(in: window?.toolbar)
+                self.scheduleResize(window: window, animated: true)
             }
         }
+        .store(in: &cancellables)
 
+        scheduleResize(window: window, animated: false)
         return window
     }
 
@@ -108,6 +100,33 @@ final class WindowManager: NSObject, NSWindowDelegate, NSToolbarDelegate {
             ctx.duration = 0.22
             ctx.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
             window.animator().setFrame(NSRect(origin: newOrigin, size: newSize), display: true)
+        }
+    }
+
+    private func scheduleResize(window: NSWindow?, animated: Bool) {
+        guard let window else { return }
+        DispatchQueue.main.async { [weak self, weak window] in
+            guard let self, let window else { return }
+            let contentHeight = SettingsContentFitter.contentHeight(
+                for: self.appState,
+                section: self.tabState.selection,
+                width: window.contentView?.bounds.width ?? window.contentLayoutRect.width
+            )
+            self.applyContentHeight(contentHeight, to: window, animated: animated)
+        }
+    }
+
+    private func applyContentHeight(_ height: CGFloat, to window: NSWindow, animated: Bool) {
+        guard height > 10 else { return }
+        let clamped = Self.clampToScreen(height)
+        if abs(clamped - lastAppliedContentHeight) < 1.0 { return }
+        lastAppliedContentHeight = clamped
+
+        if isInitialDisplay || !animated {
+            isInitialDisplay = false
+            snapHeight(window: window, to: clamped)
+        } else {
+            animate(window: window, toContentHeight: clamped)
         }
     }
 
@@ -161,5 +180,19 @@ final class WindowManager: NSObject, NSWindowDelegate, NSToolbarDelegate {
 @MainActor
 final class SettingsTabState: ObservableObject {
     @Published var selection: SettingsSection = .general
-    var onContentHeight: ((CGFloat) -> Void)?
+}
+
+@MainActor
+enum SettingsContentFitter {
+    static func contentHeight(for appState: AppState, section: SettingsSection, width: CGFloat) -> CGFloat {
+        let measuringWidth = max(width, 450)
+        let host = NSHostingView(
+            rootView: SettingsTabContent(appState: appState, selection: section, refreshOnAppear: false)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(width: measuringWidth, alignment: .top)
+        )
+        host.setFrameSize(NSSize(width: measuringWidth, height: 1))
+        host.layoutSubtreeIfNeeded()
+        return ceil(host.fittingSize.height)
+    }
 }
