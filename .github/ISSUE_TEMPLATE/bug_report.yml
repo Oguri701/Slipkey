@@ -1,0 +1,67 @@
+name: Bug report
+description: Report a Slipkey bug
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Input-method bugs are usually environment-specific, so details matter.
+  - type: input
+    id: version
+    attributes:
+      label: Slipkey version
+      placeholder: "0.1.7"
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+    validations:
+      required: true
+  - type: input
+    id: keyboard
+    attributes:
+      label: Keyboard layout
+      placeholder: "US / Japanese / Chinese"
+  - type: textarea
+    id: imes
+    attributes:
+      label: Installed input methods
+      description: Include source IDs from Slipkey Settings if possible.
+      placeholder: |
+        Japanese: 04110411
+        Chinese: 08040804
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Start Slipkey
+        2. Focus Notepad
+        3. Type ;ja
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: extra
+    attributes:
+      label: Extra context
+      description: Foreground app, whether it only happens on first run, screenshots, and config snippets are useful.

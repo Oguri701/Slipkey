@@ -18,7 +18,7 @@ echo "==> Testing Rust workspace"
 cargo test --workspace
 
 # Note: imeswitchd is no longer bundled. The daemon survives only as a
-# standalone CLI for diagnostics — `cargo build --release -p imeswitchd`
+# standalone CLI for diagnostics: `cargo build --release -p imeswitchd`
 # if you need it. The macOS hook now runs in the Slipkey app's main
 # process, so a single Accessibility grant covers everything.
 
@@ -58,10 +58,10 @@ xattr -d com.apple.FinderInfo "$APP_PATH" 2>/dev/null || true
 rm -rf "$APP_PATH/Contents/_CodeSignature"
 
 echo "==> Ad-hoc signing"
-# No nested binaries to deep-sign — Resources/ holds only an icon.
+# No nested binaries to deep-sign; Resources/ holds only static assets.
 codesign --force --sign - "$APP_PATH"
 codesign --verify --deep --strict --verbose=2 "$APP_PATH" || \
-  echo "  (warn: --deep --strict failed at $APP_PATH — continuing to /Applications re-sign)"
+  echo "  (warn: --deep --strict failed at $APP_PATH; continuing to /Applications re-sign)"
 
 echo "==> Creating zip"
 rm -f "$ZIP_PATH"
@@ -71,7 +71,7 @@ xattr -c "$ZIP_PATH" || true
 # The source tree may live under iCloud Drive's "Desktop & Documents" sync,
 # where fileprovider can continually re-add signing-hostile xattrs. Assemble
 # and sign in TMPDIR, then install the final bundle to /Applications.
-# /Applications is admin-writable on a default macOS install — this step does
+# /Applications is admin-writable on a default macOS install; this step does
 # NOT require sudo for an admin user.
 INSTALL_PATH="/Applications/$APP_NAME.app"
 echo "==> Installing to $INSTALL_PATH"
@@ -82,7 +82,7 @@ ditto --noextattr --noqtn --norsrc "$APP_PATH" "$INSTALL_PATH"
 xattr -cr "$INSTALL_PATH"
 codesign --force --sign - "$INSTALL_PATH"
 codesign --verify --deep --strict --verbose=2 "$INSTALL_PATH" || \
-  echo "  (warn: --deep --strict failed at $INSTALL_PATH — TCC may need re-grant)"
+  echo "  (warn: --deep --strict failed at $INSTALL_PATH; TCC may need re-grant)"
 
 echo ""
 echo "macOS build output:"
@@ -94,4 +94,4 @@ echo "If you'd previously granted Accessibility, the binary hash just changed"
 echo "and TCC may silently deny. To re-grant after rebuild:"
 echo "  tccutil reset Accessibility $BUNDLE_ID"
 echo "  open $INSTALL_PATH"
-echo "  # then toggle Slipkey on in System Settings → Privacy & Security → Accessibility"
+echo "  # then toggle Slipkey on in System Settings -> Privacy & Security -> Accessibility"

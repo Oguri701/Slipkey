@@ -10,7 +10,7 @@
 #     was not found.
 #
 # Static CRT adds a few MB to the binary but removes the runtime
-# dependency entirely — the right trade-off for a small standalone tool
+# dependency entirely; the right trade-off for a small standalone tool
 # people will download and run from a zip.
 
 [alias]
