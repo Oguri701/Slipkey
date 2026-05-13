@@ -11,6 +11,7 @@ final class AppState: ObservableObject {
     let settings = SettingsStore()
     var menuBarIconVisibilityDidChange: ((Bool) -> Void)?
     private let inputSourceService = InputSourceService()
+    private var accessibilityMonitorTask: Task<Void, Never>?
 
     var menuBarIconVisible: Bool {
         get { settings.menuBarIconVisible }
@@ -54,6 +55,35 @@ final class AppState: ObservableObject {
         }
     }
 
+    func startAccessibilityPermissionMonitor() {
+        accessibilityMonitorTask?.cancel()
+        refreshAccessibilityStatus()
+
+        if accessibilityGranted {
+            return
+        }
+
+        accessibilityMonitorTask = Task { [weak self] in
+            for _ in 0..<120 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard !Task.isCancelled else { return }
+                guard let self else { return }
+
+                self.refreshAccessibilityStatus()
+                if self.accessibilityGranted {
+                    self.statusMessage = L10n.text("Saved. Shortcuts are active now.", self.uiLanguage)
+                    self.accessibilityMonitorTask = nil
+                    return
+                }
+            }
+        }
+    }
+
+    func stopAccessibilityPermissionMonitor() {
+        accessibilityMonitorTask?.cancel()
+        accessibilityMonitorTask = nil
+    }
+
     func refreshDetectedSources() {
         detectedSources = inputSourceService.discover()
         if detectedSources.isEmpty {
@@ -84,6 +114,6 @@ final class AppState: ObservableObject {
 
     func requestAccessibility() {
         AccessibilityService.request()
-        refreshAccessibilityStatus()
+        startAccessibilityPermissionMonitor()
     }
 }

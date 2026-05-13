@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         if !AccessibilityService.isTrusted {
             windowManager.showSettings()
+            appState.startAccessibilityPermissionMonitor()
         }
     }
 
@@ -60,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationWillTerminate(_ notification: Notification) {
         DistributedNotificationCenter.default().removeObserver(self)
+        appState.stopAccessibilityPermissionMonitor()
         appState.hook.stop()
     }
 
