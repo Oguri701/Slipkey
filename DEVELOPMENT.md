@@ -138,7 +138,21 @@ Known edge case: on a cold Windows session, the first switch from Chinese IME to
 2. Update macOS bundle version behavior if needed.
 3. Run the Windows and macOS regression checklists on real machines.
 4. Commit all source changes.
-5. Create and push a `v*` tag:
+5. Build release packages locally on the target platform and test the exact zip before uploading:
+
+macOS:
+
+```bash
+VERSION=0.1.8 MAC_ONLY=1 bash scripts/package-macos.sh
+```
+
+Windows:
+
+```powershell
+cargo xtask build-windows
+```
+
+6. Create and push a `v*` tag:
 
 ```bash
 git tag -a v0.1.8 -m "Slipkey v0.1.8"
@@ -146,14 +160,14 @@ git push origin main
 git push origin v0.1.8
 ```
 
-GitHub Actions publishes:
+7. Create or edit the GitHub Release manually and upload only the locally tested assets:
 
 ```text
 Slipkey-<version>-macos-arm64.zip
 Slipkey-<version>-windows-x64.zip
 ```
 
-If a release asset must be uploaded manually, upload the zip to the existing GitHub Release instead of committing binaries to the repository.
+Do not commit release zips to the repository. GitHub Actions intentionally does not build release packages; macOS and Windows packages must be produced on their respective local machines after testing.
 
 ## Bug Reports
 

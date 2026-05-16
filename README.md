@@ -132,7 +132,7 @@ macOS：
 bash scripts/package-macos.sh
 ```
 
-更完整的新机器配置、测试和发版流程见 [DEVELOPMENT.md](DEVELOPMENT.md)。
+更完整的新机器配置、测试和手动发版流程见 [DEVELOPMENT.md](DEVELOPMENT.md)。
 
 ### 架构
 
@@ -283,7 +283,7 @@ macOS:
 bash scripts/package-macos.sh
 ```
 
-For full fresh-machine setup, tests, and release workflow, see [DEVELOPMENT.md](DEVELOPMENT.md).
+For full fresh-machine setup, tests, and manual release workflow, see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ### Architecture
 
