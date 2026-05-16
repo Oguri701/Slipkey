@@ -87,6 +87,11 @@ final class EventHook {
         }
     }
 
+    var isEnabled: Bool {
+        guard let tap else { return false }
+        return CGEvent.tapIsEnabled(tap: tap)
+    }
+
     deinit {
         if let src = runLoopSource {
             CFRunLoopRemoveSource(CFRunLoopGetCurrent(), src, .commonModes)
@@ -117,6 +122,7 @@ final class EventHook {
         let keycode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
         let now = Date()
+        let key = Self.eventKey(keycode: keycode, flags: flags, leader: leaderKeycode)
 
         let idle = stateMachine.isIdle
         let recentlyTyped: Bool
@@ -125,36 +131,35 @@ final class EventHook {
         } else {
             recentlyTyped = false
         }
-        let sourceKind = IMEManager.currentSourceKind()
-        let compositionState: CompositionState
-        if sourceKind == .inputMethod {
-            compositionState = Composition.focusedState()
-        } else {
-            compositionState = .inactive
-        }
-        let shouldDefer = Composition.shouldDefer(
-            idle: idle,
-            sourceIsInputMethod: sourceKind == .inputMethod,
-            state: compositionState,
-            possibleComposition: possibleComposition,
-            recentlyTyped: recentlyTyped
-        )
 
-        if shouldDefer {
-            lastKeydown = now
-            updatePossibleComposition(sourceKind: sourceKind, state: compositionState, keycode: keycode, didSwitch: false)
-            return Unmanaged.passUnretained(event)
+        if Self.shouldInspectComposition(idle: idle, key: key) {
+            let sourceKind = IMEManager.currentSourceKind()
+            let compositionState: CompositionState
+            if sourceKind == .inputMethod {
+                compositionState = Composition.focusedState()
+            } else {
+                compositionState = .inactive
+            }
+            let shouldDefer = Composition.shouldDefer(
+                idle: idle,
+                sourceIsInputMethod: sourceKind == .inputMethod,
+                state: compositionState,
+                possibleComposition: possibleComposition,
+                recentlyTyped: recentlyTyped
+            )
+
+            if shouldDefer {
+                lastKeydown = now
+                updatePossibleComposition(sourceKind: sourceKind, state: compositionState, keycode: keycode, didSwitch: false)
+                return Unmanaged.passUnretained(event)
+            }
         }
 
-        let key = Self.eventKey(keycode: keycode, flags: flags, leader: leaderKeycode)
         let response = stateMachine.onKeydown(key)
         lastKeydown = now
-        updatePossibleComposition(
-            sourceKind: sourceKind,
-            state: compositionState,
-            keycode: keycode,
-            didSwitch: response.switchTo != nil
-        )
+        if response.switchTo != nil || !idle {
+            possibleComposition = false
+        }
 
         if let lang = response.switchTo {
             onSwitch(lang)
@@ -170,6 +175,10 @@ final class EventHook {
             return nil  // drop the event
         }
         return Unmanaged.passUnretained(event)
+    }
+
+    static func shouldInspectComposition(idle: Bool, key: HookKey) -> Bool {
+        idle && key == .leader
     }
 
     private func updatePossibleComposition(
@@ -213,4 +222,3 @@ final class EventHook {
         }
     }
 }
-

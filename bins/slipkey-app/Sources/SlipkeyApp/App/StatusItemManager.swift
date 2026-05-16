@@ -10,7 +10,7 @@ final class StatusItemManager: NSObject, NSMenuDelegate {
         self.appState = appState
         self.windowManager = windowManager
         super.init()
-        item.button?.image = NSImage(systemSymbolName: "keyboard", accessibilityDescription: "Slipkey")
+        item.button?.image = Self.makeStatusImage()
         item.button?.image?.isTemplate = true
         item.menu = NSMenu()
         item.menu?.delegate = self
@@ -20,7 +20,44 @@ final class StatusItemManager: NSObject, NSMenuDelegate {
         if #available(macOS 10.12, *) {
             item.isVisible = appState.menuBarIconVisible
         }
-        item.length = appState.menuBarIconVisible ? NSStatusItem.variableLength : 0
+        item.length = Self.statusItemLength(isVisible: appState.menuBarIconVisible)
+    }
+
+    static func statusItemLength(isVisible: Bool) -> CGFloat {
+        isVisible ? 28 : 0
+    }
+
+    static func makeStatusImage() -> NSImage? {
+        if let url = Bundle.main.url(forResource: "status-keyboard-template", withExtension: "png"),
+           let image = NSImage(contentsOf: url) {
+            image.size = NSSize(width: 21, height: 21)
+            image.isTemplate = true
+            return image
+        }
+
+        return drawFallbackKeyboardImage()
+    }
+
+    private static func drawFallbackKeyboardImage() -> NSImage {
+        let image = NSImage(size: NSSize(width: 18, height: 18))
+        image.lockFocus()
+
+        NSColor.black.setStroke()
+        NSColor.black.setFill()
+
+        let body = NSBezierPath(roundedRect: NSRect(x: 2.5, y: 4.5, width: 13, height: 9), xRadius: 2, yRadius: 2)
+        body.lineWidth = 1.2
+        body.stroke()
+
+        for y in [10.0, 7.0] {
+            for x in [5.0, 8.0, 11.0] {
+                NSBezierPath(rect: NSRect(x: x, y: y, width: 1.5, height: 1.5)).fill()
+            }
+        }
+
+        image.unlockFocus()
+        image.isTemplate = true
+        return image
     }
 
     func menuWillOpen(_ menu: NSMenu) {

@@ -1,6 +1,12 @@
 import AppKit
 import SwiftUI
 
+enum AppLaunchPresentation {
+    static func shouldShowSettingsOnInitialLaunch(accessibilityTrusted: Bool) -> Bool {
+        true
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private static let showSettingsNotification = Notification.Name("dev.zlb.imeswitch.showSettings")
@@ -40,10 +46,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.load()
         statusItemManager.applyVisibility()
         _ = appState.hook.start(with: appState.config)
+        appState.startAccessibilityPermissionMonitor()
 
-        if !AccessibilityService.isTrusted {
+        if AppLaunchPresentation.shouldShowSettingsOnInitialLaunch(accessibilityTrusted: AccessibilityService.isTrusted) {
             windowManager.showSettings()
-            appState.startAccessibilityPermissionMonitor()
         }
     }
 

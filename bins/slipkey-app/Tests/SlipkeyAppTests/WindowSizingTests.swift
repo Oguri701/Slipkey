@@ -60,8 +60,29 @@ final class WindowSizingTests: XCTestCase {
             .appendingPathComponent("Sources/SlipkeyApp/App/WindowManager.swift")
         let src = try String(contentsOf: url, encoding: .utf8)
 
+        guard let fitterRange = src.range(of: "enum SettingsContentFitter") else {
+            XCTFail("SettingsContentFitter should own Settings height policy")
+            return
+        }
+        let fitterSrc = String(src[fitterRange.lowerBound...])
+
         XCTAssertTrue(src.contains("SettingsContentFitter"))
         XCTAssertFalse(src.contains("onContentHeight"))
+        XCTAssertFalse(fitterSrc.contains("NSHostingView("))
+        XCTAssertFalse(fitterSrc.contains("fittingSize"))
+    }
+
+    func test_content_height_uses_deterministic_tab_metrics() {
+        let appState = AppState()
+        appState.config.mappings = [
+            MappingEntry(language: "en", prefix: "en", source: "com.apple.keylayout.ABC"),
+            MappingEntry(language: "ja", prefix: "ja", source: "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese"),
+            MappingEntry(language: "zh", prefix: "zh", source: "com.apple.inputmethod.SCIM.Shuangpin")
+        ]
+
+        XCTAssertEqual(SettingsContentFitter.contentHeight(for: appState, section: .general, width: 450), 254)
+        XCTAssertEqual(SettingsContentFitter.contentHeight(for: appState, section: .shortcuts, width: 450), 258)
+        XCTAssertEqual(SettingsContentFitter.contentHeight(for: appState, section: .about, width: 450), 180)
     }
 
     func test_content_fitter_returns_compact_heights_for_all_tabs() {

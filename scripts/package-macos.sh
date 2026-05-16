@@ -14,8 +14,13 @@ APP_PATH="$BUNDLE_DIR/$APP_NAME.app"
 DIST_DIR="$ROOT/dist"
 ZIP_PATH="$DIST_DIR/$APP_NAME-$VERSION-macos-arm64.zip"
 
-echo "==> Testing Rust workspace"
-cargo test --workspace
+if [[ "${MAC_ONLY:-0}" == "1" ]]; then
+  echo "==> Testing Rust workspace (macOS-only, excluding Windows package)"
+  cargo test --workspace --exclude slipkey-windows
+else
+  echo "==> Testing Rust workspace"
+  cargo test --workspace
+fi
 
 # Note: imeswitchd is no longer bundled. The daemon survives only as a
 # standalone CLI for diagnostics: `cargo build --release -p imeswitchd`
@@ -42,6 +47,7 @@ mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources" "$DIST_DIR"
 cp "$ROOT/bins/slipkey-app/Info.plist" "$APP_PATH/Contents/Info.plist"
 cp "$SWIFT_SCRATCH/release/$APP_NAME" "$APP_PATH/Contents/MacOS/$APP_NAME"
 cp "$ROOT/bins/slipkey-app/Resources/icon.icns" "$APP_PATH/Contents/Resources/icon.icns"
+cp "$ROOT/bins/slipkey-app/Resources/status-keyboard-template.png" "$APP_PATH/Contents/Resources/status-keyboard-template.png"
 cp "$ROOT/bins/slipkey-app/Resources/wechat-support.jpeg" "$APP_PATH/Contents/Resources/wechat-support.jpeg"
 
 chmod +x "$APP_PATH/Contents/MacOS/$APP_NAME"

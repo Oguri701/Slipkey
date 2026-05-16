@@ -1,5 +1,21 @@
 import Foundation
 
+enum AccessibilityMonitorAction: Equatable {
+    case none
+    case startHook
+    case stopHook
+
+    static func resolve(wasGranted: Bool, isTrusted: Bool, hookRunning: Bool) -> AccessibilityMonitorAction {
+        if !isTrusted && (wasGranted || hookRunning) {
+            return .stopHook
+        }
+        if isTrusted && !hookRunning {
+            return .startHook
+        }
+        return .none
+    }
+}
+
 @MainActor
 final class AppState: ObservableObject {
     @Published var config = SlipkeyConfig.defaults()
@@ -49,9 +65,22 @@ final class AppState: ObservableObject {
 
     func refreshAccessibilityStatus() {
         let trusted = AccessibilityService.isTrusted
+        let action = AccessibilityMonitorAction.resolve(
+            wasGranted: accessibilityGranted,
+            isTrusted: trusted,
+            hookRunning: hook.isRunning
+        )
         accessibilityGranted = trusted
-        if trusted && !hook.isRunning {
+
+        switch action {
+        case .startHook:
             _ = hook.start(with: config)
+            statusMessage = L10n.text("Saved. Shortcuts are active now.", uiLanguage)
+        case .stopHook:
+            hook.stop()
+            statusMessage = L10n.text("Accessibility permission required", uiLanguage)
+        case .none:
+            break
         }
     }
 
@@ -59,22 +88,14 @@ final class AppState: ObservableObject {
         accessibilityMonitorTask?.cancel()
         refreshAccessibilityStatus()
 
-        if accessibilityGranted {
-            return
-        }
-
         accessibilityMonitorTask = Task { [weak self] in
-            for _ in 0..<120 {
-                try? await Task.sleep(nanoseconds: 500_000_000)
+            while !Task.isCancelled {
                 guard !Task.isCancelled else { return }
                 guard let self else { return }
 
                 self.refreshAccessibilityStatus()
-                if self.accessibilityGranted {
-                    self.statusMessage = L10n.text("Saved. Shortcuts are active now.", self.uiLanguage)
-                    self.accessibilityMonitorTask = nil
-                    return
-                }
+                let interval: UInt64 = self.accessibilityGranted ? 5_000_000_000 : 500_000_000
+                try? await Task.sleep(nanoseconds: interval)
             }
         }
     }

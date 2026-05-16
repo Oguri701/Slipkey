@@ -185,14 +185,14 @@ final class SettingsTabState: ObservableObject {
 @MainActor
 enum SettingsContentFitter {
     static func contentHeight(for appState: AppState, section: SettingsSection, width: CGFloat) -> CGFloat {
-        let measuringWidth = max(width, 450)
-        let host = NSHostingView(
-            rootView: SettingsTabContent(appState: appState, selection: section, refreshOnAppear: false)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(width: measuringWidth, alignment: .top)
-        )
-        host.setFrameSize(NSSize(width: measuringWidth, height: 1))
-        host.layoutSubtreeIfNeeded()
-        return ceil(host.fittingSize.height)
+        switch section {
+        case .general:
+            return 254
+        case .shortcuts:
+            let rowCount = max(appState.config.mappings.count, 1)
+            return CGFloat(156 + rowCount * 34)
+        case .about:
+            return 180
+        }
     }
 }

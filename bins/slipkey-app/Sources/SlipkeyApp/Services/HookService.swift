@@ -45,7 +45,7 @@ final class HookService {
         _ = start(with: config)
     }
 
-    var isRunning: Bool { hook != nil }
+    var isRunning: Bool { hook?.isEnabled == true }
 
     private func handleSwitch(lang: String, config: SlipkeyConfig) {
         guard let entry = config.mappings.first(where: { $0.language.lowercased() == lang.lowercased() }) else {

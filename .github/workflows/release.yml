@@ -36,6 +36,7 @@ jobs:
           cp bins/slipkey-app/Info.plist "$APP_PATH/Contents/Info.plist"
           cp "$SWIFT_SCRATCH/release/$APP_NAME" "$APP_PATH/Contents/MacOS/$APP_NAME"
           cp bins/slipkey-app/Resources/icon.icns "$APP_PATH/Contents/Resources/icon.icns"
+          cp bins/slipkey-app/Resources/status-keyboard-template.png "$APP_PATH/Contents/Resources/status-keyboard-template.png"
           cp bins/slipkey-app/Resources/wechat-support.jpeg "$APP_PATH/Contents/Resources/wechat-support.jpeg"
           chmod +x "$APP_PATH/Contents/MacOS/$APP_NAME"
 
@@ -56,48 +57,11 @@ jobs:
           name: macos-release
           path: dist/Slipkey-*-macos-arm64.zip
 
-  windows:
-    name: Build Windows app
-    runs-on: windows-2025
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # The slipkey-windows build.rs preflight requires the embedded helper
-      # DLL to exist before cargo touches slipkey-windows. Keep that local/CI
-      # choreography in xtask instead of duplicating copy commands here.
-      - name: Stage helper DLL into embed/
-        run: cargo xtask stage-windows-helper
-
-      - name: Test Rust workspace
-        run: cargo test --workspace
-
-      - name: Build Slipkey.exe (with embedded DLL)
-        run: cargo xtask build-windows
-
-      - name: Package Windows artifact (single file)
-        shell: pwsh
-        run: |
-          $version = $env:GITHUB_REF_NAME.TrimStart("v")
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          Copy-Item target/x86_64-pc-windows-msvc/release/Slipkey.exe dist/Slipkey.exe
-          Compress-Archive `
-            -Path dist/Slipkey.exe `
-            -DestinationPath "dist/Slipkey-$version-windows-x64.zip" `
-            -Force
-
-      - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-release
-          path: dist/Slipkey-*-windows-x64.zip
-
   release:
     name: Publish GitHub Release
     runs-on: ubuntu-latest
     needs:
       - macos
-      - windows
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4
