@@ -33,9 +33,6 @@ final class EventHook {
     private let onSwitch: (String) -> Void
     private let onLog: (String) -> Void
 
-    private var lastKeydown: Date?
-    private var possibleComposition: Bool = false
-
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
 
@@ -121,16 +118,9 @@ final class EventHook {
     private func handleKeyDown(_ event: CGEvent) -> Unmanaged<CGEvent>? {
         let keycode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
-        let now = Date()
         let key = Self.eventKey(keycode: keycode, flags: flags, leader: leaderKeycode)
 
         let idle = stateMachine.isIdle
-        let recentlyTyped: Bool
-        if let last = lastKeydown {
-            recentlyTyped = now.timeIntervalSince(last) < Composition.idleThreshold
-        } else {
-            recentlyTyped = false
-        }
 
         if Self.shouldInspectComposition(idle: idle, key: key) {
             let sourceKind = IMEManager.currentSourceKind()
@@ -140,26 +130,17 @@ final class EventHook {
             } else {
                 compositionState = .inactive
             }
-            let shouldDefer = Composition.shouldDefer(
-                idle: idle,
+            let shouldDefer = Composition.shouldDeferLeader(
                 sourceIsInputMethod: sourceKind == .inputMethod,
-                state: compositionState,
-                possibleComposition: possibleComposition,
-                recentlyTyped: recentlyTyped
+                state: compositionState
             )
 
             if shouldDefer {
-                lastKeydown = now
-                updatePossibleComposition(sourceKind: sourceKind, state: compositionState, keycode: keycode, didSwitch: false)
                 return Unmanaged.passUnretained(event)
             }
         }
 
         let response = stateMachine.onKeydown(key)
-        lastKeydown = now
-        if response.switchTo != nil || !idle {
-            possibleComposition = false
-        }
 
         if let lang = response.switchTo {
             onSwitch(lang)
@@ -179,27 +160,6 @@ final class EventHook {
 
     static func shouldInspectComposition(idle: Bool, key: HookKey) -> Bool {
         idle && key == .leader
-    }
-
-    private func updatePossibleComposition(
-        sourceKind: CurrentSourceKind, state: CompositionState, keycode: UInt16, didSwitch: Bool
-    ) {
-        if didSwitch || sourceKind != .inputMethod {
-            possibleComposition = false
-            return
-        }
-        switch state {
-        case .active:
-            possibleComposition = true
-        case .inactive:
-            possibleComposition = false
-        case .unknown:
-            if Composition.isCompositionEnding(keycode: keycode) {
-                possibleComposition = false
-            } else {
-                possibleComposition = true
-            }
-        }
     }
 
     private static func eventKey(keycode: UInt16, flags: CGEventFlags, leader: UInt16) -> HookKey {

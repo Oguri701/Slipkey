@@ -28,6 +28,13 @@ enum Composition {
         }
     }
 
+    /// The leader key starts Slipkey's trigger sequence, so uncertainty must
+    /// not make it pass through as a plain semicolon. Only a confirmed marked
+    /// text range should defer the leader to the active IME composition.
+    static func shouldDeferLeader(sourceIsInputMethod: Bool, state: CompositionState) -> Bool {
+        sourceIsInputMethod && state == .active
+    }
+
     /// Asks Accessibility about the focused element's marked-text range.
     /// Returns `.unknown` if AX cannot answer (web views, opaque controls).
     static func focusedState() -> CompositionState {

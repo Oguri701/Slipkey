@@ -115,4 +115,17 @@ final class StateMachineTests: XCTestCase {
         XCTAssertEqual(feed(&sm, [.leader, k("j"), k("a")]).switchTo, "ja")
         XCTAssertEqual(feed(&sm, [.leader, k("z"), k("h")]).switchTo, "zh")
     }
+
+    func testRepeatedWrongTriggersDoNotPoisonNextLeader() {
+        var sm = StateMachine.defaults()
+
+        for keys in [[HookKey.leader, k("j"), k("r")], [.leader, k("z"), k("a")], [.leader, k("e"), k("k")]] {
+            let r = feed(&sm, keys)
+            XCTAssertFalse(r.suppress)
+            XCTAssertNil(r.switchTo)
+            XCTAssertTrue(sm.isIdle)
+        }
+
+        XCTAssertEqual(feed(&sm, [.leader, k("j"), k("a")]).switchTo, "ja")
+    }
 }

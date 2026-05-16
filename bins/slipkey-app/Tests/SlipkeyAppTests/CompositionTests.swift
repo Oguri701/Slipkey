@@ -26,6 +26,13 @@ final class CompositionTests: XCTestCase {
             state: .unknown, possibleComposition: false, recentlyTyped: false))
     }
 
+    func testLeaderOnlyDefersForConfirmedActiveComposition() {
+        XCTAssertTrue(Composition.shouldDeferLeader(sourceIsInputMethod: true, state: .active))
+        XCTAssertFalse(Composition.shouldDeferLeader(sourceIsInputMethod: true, state: .unknown))
+        XCTAssertFalse(Composition.shouldDeferLeader(sourceIsInputMethod: true, state: .inactive))
+        XCTAssertFalse(Composition.shouldDeferLeader(sourceIsInputMethod: false, state: .active))
+    }
+
     func testNonIdleNeverDefers() {
         XCTAssertFalse(Composition.shouldDefer(
             idle: false, sourceIsInputMethod: true,
