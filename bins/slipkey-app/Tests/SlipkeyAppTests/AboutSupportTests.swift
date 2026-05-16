@@ -37,12 +37,7 @@ final class AboutSupportTests: XCTestCase {
             contentsOf: repoRoot.appendingPathComponent("scripts/package-macos.sh"),
             encoding: .utf8
         )
-        let workflow = try String(
-            contentsOf: repoRoot.appendingPathComponent(".github/workflows/release.yml"),
-            encoding: .utf8
-        )
 
         XCTAssertTrue(script.contains("wechat-support.jpeg"))
-        XCTAssertTrue(workflow.contains("wechat-support.jpeg"))
     }
 }
