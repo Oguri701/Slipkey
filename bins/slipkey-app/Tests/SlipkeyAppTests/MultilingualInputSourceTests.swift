@@ -65,4 +65,17 @@ final class MultilingualInputSourceTests: XCTestCase {
         XCTAssertEqual(french?.name, "Old French")
         XCTAssertEqual(french?.enabled, false)
     }
+
+    func test_detection_dedupes_same_language_same_display_name_but_keeps_distinct_chinese_sources() {
+        let sources = InputSourceService.dedupedForDisplay([
+            InputSource(language: "ja", sourceID: "com.apple.inputmethod.Kotoeri.KanaTyping.Japanese", name: "Hiragana", rawLanguage: "ja", isSelectable: true),
+            InputSource(language: "ja", sourceID: "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese", name: "Hiragana", rawLanguage: "ja", isSelectable: true),
+            InputSource(language: "zh", sourceID: "com.apple.inputmethod.SCIM.Shuangpin", name: "Shuangpin - Simplified", rawLanguage: "zh-Hans", isSelectable: true),
+            InputSource(language: "zh", sourceID: "com.apple.inputmethod.SCIM.ITABC", name: "Pinyin - Simplified", rawLanguage: "zh-Hans", isSelectable: true)
+        ])
+
+        XCTAssertEqual(sources.filter { $0.language == "ja" }.count, 1)
+        XCTAssertEqual(sources.first { $0.language == "ja" }?.sourceID, "com.apple.inputmethod.Kotoeri.RomajiTyping.Japanese")
+        XCTAssertEqual(sources.filter { $0.language == "zh" }.count, 2)
+    }
 }

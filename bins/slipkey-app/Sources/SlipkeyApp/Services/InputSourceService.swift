@@ -2,7 +2,6 @@ import Foundation
 
 struct InputSourceService {
     func discover() -> [InputSource] {
-        var seen = Set<String>()
         var result: [InputSource] = []
         for src in IMEManager.listAll() {
             guard isRealTypingSource(src.type),
@@ -12,16 +11,15 @@ struct InputSourceService {
             else { continue }
             guard let language = src.languages.compactMap(normalizedSupportedLanguage).first
             else { continue }
-            let dedupeKey = src.id
-            guard seen.insert(dedupeKey).inserted else { continue }
-            result.append(InputSource(
+            let candidate = InputSource(
                 platform: "macos",
                 language: language,
                 sourceID: src.id,
                 name: src.name,
                 rawLanguage: src.languages.first ?? "",
                 isSelectable: src.isSelectable
-            ))
+            )
+            insertDeduped(candidate, into: &result)
         }
         return result
     }
@@ -32,6 +30,40 @@ struct InputSourceService {
 
     private func normalizedSupportedLanguage(_ rawLanguage: String) -> String? {
         Self.normalizedLanguage(rawLanguage)
+    }
+
+    private func insertDeduped(_ candidate: InputSource, into result: inout [InputSource]) {
+        let duplicateIndex = result.firstIndex { existing in
+            existing.language == candidate.language &&
+            existing.name.caseInsensitiveCompare(candidate.name) == .orderedSame
+        }
+        guard let duplicateIndex else {
+            result.append(candidate)
+            return
+        }
+        if Self.prefers(candidate, over: result[duplicateIndex]) {
+            result[duplicateIndex] = candidate
+        }
+    }
+
+    static func dedupedForDisplay(_ sources: [InputSource]) -> [InputSource] {
+        var result: [InputSource] = []
+        let service = InputSourceService()
+        for source in sources {
+            service.insertDeduped(source, into: &result)
+        }
+        return result
+    }
+
+    private static func prefers(_ candidate: InputSource, over existing: InputSource) -> Bool {
+        sourcePriority(candidate) < sourcePriority(existing)
+    }
+
+    private static func sourcePriority(_ source: InputSource) -> Int {
+        let id = source.sourceID.lowercased()
+        if id.contains("romajityping") { return 0 }
+        if id.contains("kanatyping") { return 10 }
+        return 5
     }
 
     static func normalizedLanguage(_ rawLanguage: String) -> String? {
