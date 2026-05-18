@@ -2,10 +2,28 @@ import Foundation
 
 struct InputSource: Identifiable, Hashable {
     var id: String { sourceID }
+    let platform: String
     let language: String
     let sourceID: String
     let name: String
+    let rawLanguage: String
     let isSelectable: Bool
+
+    init(
+        platform: String = "macos",
+        language: String,
+        sourceID: String,
+        name: String,
+        rawLanguage: String = "",
+        isSelectable: Bool
+    ) {
+        self.platform = platform
+        self.language = language
+        self.sourceID = sourceID
+        self.name = name
+        self.rawLanguage = rawLanguage
+        self.isSelectable = isSelectable
+    }
 }
 
 struct MappingEntry: Identifiable, Hashable {
@@ -13,6 +31,16 @@ struct MappingEntry: Identifiable, Hashable {
     var language: String
     var prefix: String
     var source: String
+    var name: String
+    var enabled: Bool
+
+    init(language: String, prefix: String, source: String, name: String = "", enabled: Bool = true) {
+        self.language = language
+        self.prefix = prefix
+        self.source = source
+        self.name = name
+        self.enabled = enabled
+    }
 }
 
 struct SlipkeyConfig: Hashable {
@@ -33,6 +61,7 @@ struct SlipkeyConfig: Hashable {
     func validationErrors() -> [String] {
         var errors: [String] = []
         let rows = mappings
+            .filter(\.enabled)
             .map { ($0.language, $0.prefix.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()) }
             .filter { !$0.1.isEmpty }
 
@@ -69,19 +98,48 @@ struct SlipkeyConfig: Hashable {
     }
 
     func mergingDetectedSources(_ sources: [InputSource]) -> SlipkeyConfig {
-        let languages = Array(Set(sources.filter(\.isSelectable).map(\.language))).sorted()
-        guard !languages.isEmpty else { return self }
+        let selectableSources = sources.filter(\.isSelectable)
+        guard !selectableSources.isEmpty else { return self }
+        let existingLanguages = Set(mappings.map(\.language))
+        let detectedLanguages = Set(selectableSources.map(\.language))
+        let languages = Array(existingLanguages.union(detectedLanguages)).sorted()
+
         let rows = languages.map { language -> MappingEntry in
-            let candidates = sources.filter { $0.language == language && $0.isSelectable }
-            let existing = mappings.first { item in
-                item.language == language && candidates.contains { $0.sourceID == item.source }
-            } ?? mappings.first { $0.language == language }
+            let candidates = selectableSources.filter { $0.language == language }
+            let existing = mappings.first { $0.language == language }
+            let selected = preferredSource(for: language, candidates: candidates, existing: existing)
             return MappingEntry(
                 language: language,
                 prefix: existing?.prefix ?? language.lowercased(),
-                source: candidates.contains { $0.sourceID == existing?.source } ? (existing?.source ?? "") : (candidates.first?.sourceID ?? existing?.source ?? "")
+                source: selected?.sourceID ?? existing?.source ?? "",
+                name: selected?.name ?? existing?.name ?? "",
+                enabled: existing?.enabled ?? true
             )
         }
         return SlipkeyConfig(leader: leader, mappings: rows)
     }
+
+    private func preferredSource(for language: String, candidates: [InputSource], existing: MappingEntry?) -> InputSource? {
+        if let existing, let match = candidates.first(where: { $0.sourceID == existing.source }) {
+            return match
+        }
+        let preferredNames = Self.preferredSourceNames[language] ?? [language]
+        if let match = candidates.first(where: { source in
+            let sourceName = source.name.lowercased()
+            return preferredNames.contains { sourceName.contains($0.lowercased()) }
+        }) {
+            return match
+        }
+        return candidates.first
+    }
+
+    private static let preferredSourceNames: [String: [String]] = [
+        "en": ["ABC", "US", "English"],
+        "ja": ["Japanese - Romaji", "Microsoft Japanese IME", "Japanese"],
+        "zh": ["Microsoft Pinyin", "Pinyin", "Shuangpin"],
+        "ko": ["Korean"],
+        "fr": ["French"],
+        "de": ["German"],
+        "es": ["Spanish"]
+    ]
 }

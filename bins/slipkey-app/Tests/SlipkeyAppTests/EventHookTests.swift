@@ -20,4 +20,15 @@ final class EventHookTests: XCTestCase {
         XCTAssertFalse(src.contains("var isRunning: Bool { hook != nil }"))
         XCTAssertTrue(src.contains("hook?.isEnabled == true"))
     }
+
+    func test_hook_service_ignores_disabled_mapping_rows() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // SlipkeyAppTests
+            .deletingLastPathComponent() // Tests
+            .deletingLastPathComponent() // slipkey-app
+            .appendingPathComponent("Sources/SlipkeyApp/Services/HookService.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+
+        XCTAssertTrue(src.contains(".filter { $0.enabled && !$0.prefix.isEmpty }"))
+    }
 }

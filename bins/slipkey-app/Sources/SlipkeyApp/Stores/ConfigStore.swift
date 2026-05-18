@@ -19,7 +19,13 @@ enum ConfigStore {
                 current.removeAll()
                 return
             }
-            rows.append(MappingEntry(language: language, prefix: current["prefix"] ?? language, source: source))
+            rows.append(MappingEntry(
+                language: language,
+                prefix: current["prefix"] ?? language,
+                source: source,
+                name: current["name"] ?? "",
+                enabled: parseBool(current["enabled"]) ?? true
+            ))
             current.removeAll()
         }
 
@@ -34,7 +40,7 @@ enum ConfigStore {
             let value = unquote(String(line[line.index(after: eq)...]).trimmingCharacters(in: .whitespaces))
             if key == "leader" {
                 leader = value
-            } else if ["language", "prefix", "source"].contains(String(key)) {
+            } else if ["language", "prefix", "source", "name", "enabled"].contains(String(key)) {
                 current[String(key)] = value
             }
         }
@@ -53,6 +59,8 @@ enum ConfigStore {
             lines.append("language = \(quote(mapping.language))")
             lines.append("prefix = \(quote(mapping.prefix))")
             lines.append("source = \(quote(mapping.source))")
+            lines.append("name = \(quote(mapping.name))")
+            lines.append("enabled = \(mapping.enabled ? "true" : "false")")
             lines.append("")
         }
         try lines.joined(separator: "\n").write(to: path, atomically: true, encoding: .utf8)
@@ -67,5 +75,14 @@ enum ConfigStore {
         if result.hasPrefix("\"") { result.removeFirst() }
         if result.hasSuffix("\"") { result.removeLast() }
         return result.replacingOccurrences(of: "\\\"", with: "\"").replacingOccurrences(of: "\\\\", with: "\\")
+    }
+
+    private static func parseBool(_ value: String?) -> Bool? {
+        guard let value else { return nil }
+        switch value.lowercased() {
+        case "true": return true
+        case "false": return false
+        default: return nil
+        }
     }
 }

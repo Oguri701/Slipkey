@@ -12,12 +12,14 @@ struct InputSourceService {
             else { continue }
             guard let language = src.languages.compactMap(normalizedSupportedLanguage).first
             else { continue }
-            let dedupeKey = "\(language)\t\(src.name)"
+            let dedupeKey = src.id
             guard seen.insert(dedupeKey).inserted else { continue }
             result.append(InputSource(
+                platform: "macos",
                 language: language,
                 sourceID: src.id,
                 name: src.name,
+                rawLanguage: src.languages.first ?? "",
                 isSelectable: src.isSelectable
             ))
         }
@@ -29,10 +31,21 @@ struct InputSourceService {
     }
 
     private func normalizedSupportedLanguage(_ rawLanguage: String) -> String? {
-        let language = rawLanguage.lowercased()
-        if language == "en" || language.hasPrefix("en-") || language.hasPrefix("en_") { return "en" }
-        if language == "ja" || language.hasPrefix("ja-") || language.hasPrefix("ja_") { return "ja" }
-        if language == "zh" || language.hasPrefix("zh-") || language.hasPrefix("zh_") { return "zh" }
-        return nil
+        Self.normalizedLanguage(rawLanguage)
+    }
+
+    static func normalizedLanguage(_ rawLanguage: String) -> String? {
+        let language = rawLanguage
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "_", with: "-")
+            .lowercased()
+        guard !language.isEmpty else { return nil }
+        let code = language.split(separator: "-", omittingEmptySubsequences: true).first.map(String.init) ?? language
+        switch code {
+        case "en", "ja", "zh", "ko", "fr", "de", "es":
+            return code
+        default:
+            return nil
+        }
     }
 }

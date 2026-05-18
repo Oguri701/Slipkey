@@ -14,7 +14,7 @@ final class HookService {
         let leaderChar = config.leader.first ?? ";"
         let leaderKC = Keycode.leaderKeycode(for: leaderChar) ?? Keycode.semicolon
         let mappings: [(language: String, prefix: String)] = config.mappings
-            .filter { !$0.prefix.isEmpty }
+            .filter { $0.enabled && !$0.prefix.isEmpty }
             .map { (language: $0.language.lowercased(), prefix: $0.prefix) }
 
         let hook = EventHook(

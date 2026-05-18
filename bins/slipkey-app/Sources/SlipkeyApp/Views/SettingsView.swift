@@ -178,7 +178,7 @@ struct ShortcutSettingsView: View {
                     }
                     .padding(.top, 1)
                 }
-                .frame(width: 330, alignment: .leading)
+                .frame(width: 360, alignment: .leading)
             }
         }
         .onAppear {
@@ -192,17 +192,21 @@ struct ShortcutSettingsView: View {
 struct ShortcutTable: View {
     @ObservedObject var appState: AppState
 
-    // tableW - hPad*2 - langW - gap - prefW - gap = sourceW
-    private let tableW:  CGFloat = 330
+    // tableW - hPad*2 - enabledW - gap - langW - gap - prefW - gap = sourceW
+    private let tableW:  CGFloat = 360
     private let hPad:    CGFloat = 10
-    private let langW:   CGFloat = 70
+    private let enabledW: CGFloat = 24
+    private let langW:   CGFloat = 76
     private let prefW:   CGFloat = 52
     private let gap:     CGFloat = 8
-    private var sourceW: CGFloat { tableW - hPad * 2 - langW - gap - prefW - gap }
+    private var sourceW: CGFloat { tableW - hPad * 2 - enabledW - gap - langW - gap - prefW - gap }
 
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
+                TableHeader("")
+                    .frame(width: enabledW, alignment: .center)
+                Spacer().frame(width: gap)
                 TableHeader(L10n.text("Language", appState.uiLanguage))
                     .frame(width: langW, alignment: .leading)
                 Spacer().frame(width: gap)
@@ -219,13 +223,21 @@ struct ShortcutTable: View {
 
             ForEach($appState.config.mappings) { $mapping in
                 HStack(spacing: 0) {
+                    Toggle("", isOn: $mapping.enabled)
+                        .labelsHidden()
+                        .toggleStyle(.checkbox)
+                        .controlSize(.small)
+                        .frame(width: enabledW, alignment: .center)
+                    Spacer().frame(width: gap)
                     Text(languageName(mapping.language))
                         .lineLimit(1)
+                        .foregroundStyle(mapping.enabled ? .primary : .secondary)
                         .frame(width: langW, alignment: .leading)
                     Spacer().frame(width: gap)
                     TextField("", text: $mapping.prefix)
                         .textFieldStyle(.roundedBorder)
                         .controlSize(.small)
+                        .disabled(!mapping.enabled)
                         .frame(width: prefW)
                     Spacer().frame(width: gap)
                     SourceMenu(
@@ -251,12 +263,11 @@ struct ShortcutTable: View {
     }
 
     private func languageName(_ code: String) -> String {
-        switch code {
-        case "en": "English"
-        case "zh": "中文"
-        case "ja": "日本語"
-        default: code.uppercased()
+        let locale = Locale.current
+        if let name = locale.localizedString(forLanguageCode: code) {
+            return name.capitalized(with: locale)
         }
+        return code.uppercased()
     }
 }
 
@@ -276,7 +287,7 @@ struct SourceMenu: View {
             }
             if !sources.contains(where: { $0.sourceID == mapping.source }) {
                 Button {} label: {
-                    menuItemLabel(mapping.source, isSelected: true)
+                    menuItemLabel(unavailableTitle, isSelected: true)
                 }
                 .disabled(true)
             }
@@ -291,7 +302,7 @@ struct SourceMenu: View {
                     .foregroundStyle(.secondary)
             }
             .font(.system(size: 12))
-            .foregroundStyle(.primary)
+            .foregroundStyle(isUnavailable ? .secondary : .primary)
             .padding(.horizontal, 8)
             .frame(width: width, height: 22, alignment: .leading)
             .background(Color(nsColor: .controlColor), in: RoundedRectangle(cornerRadius: 5, style: .continuous))
@@ -302,7 +313,16 @@ struct SourceMenu: View {
     }
 
     private var selectedSourceName: String {
-        sources.first { $0.sourceID == mapping.source }?.name ?? mapping.source
+        sources.first { $0.sourceID == mapping.source }?.name ?? unavailableTitle
+    }
+
+    private var isUnavailable: Bool {
+        !mapping.source.isEmpty && !sources.contains { $0.sourceID == mapping.source }
+    }
+
+    private var unavailableTitle: String {
+        let displayName = mapping.name.isEmpty ? mapping.source : mapping.name
+        return displayName.isEmpty ? "Unavailable" : "\(displayName) (Unavailable)"
     }
 
     @ViewBuilder

@@ -41,4 +41,16 @@ final class ConfigValidationTests: XCTestCase {
 
         XCTAssertFalse(config.validationErrors().isEmpty)
     }
+
+    func testDisabledRowsDoNotParticipateInPrefixValidation() {
+        let config = SlipkeyConfig(
+            leader: ";",
+            mappings: [
+                MappingEntry(language: "en", prefix: "en", source: "com.apple.keylayout.ABC", enabled: true),
+                MappingEntry(language: "fr", prefix: "en", source: "missing.french.source", enabled: false)
+            ]
+        )
+
+        XCTAssertTrue(config.validationErrors().isEmpty)
+    }
 }
