@@ -43,4 +43,45 @@ final class EventHookTests: XCTestCase {
         event.setIntegerValueField(.eventSourceUserData, value: 0x534c_4950_4b45_5901)
         XCTAssertTrue(EventHook.isSyntheticReplayEvent(event))
     }
+
+    func test_async_replay_includes_current_key_for_cancelled_alpha_sequence() {
+        let response = StateMachineResponse.cancel(replay: [.leader, .alphaNum("j")])
+        let keys = EventHook.replayKeys(
+            for: response,
+            currentKey: .alphaNum("r"),
+            currentKeycode: 0x0F,
+            leaderKeycode: Keycode.semicolon
+        )
+
+        XCTAssertEqual(keys, [Keycode.semicolon, 0x26, 0x0F])
+        XCTAssertTrue(EventHook.shouldSuppressCurrentEventForAsyncReplay(response: response, currentKey: .alphaNum("r")))
+    }
+
+    func test_async_replay_does_not_suppress_unmappable_current_key() {
+        let response = StateMachineResponse.cancel(replay: [.leader])
+
+        XCTAssertFalse(EventHook.shouldSuppressCurrentEventForAsyncReplay(response: response, currentKey: .other))
+        XCTAssertEqual(
+            EventHook.replayKeys(
+                for: response,
+                currentKey: .other,
+                currentKeycode: 0,
+                leaderKeycode: Keycode.semicolon
+            ),
+            [Keycode.semicolon]
+        )
+    }
+
+    func test_switch_response_has_no_replay_keys() {
+        let response = StateMachineResponse.switchTo("ja")
+        XCTAssertEqual(
+            EventHook.replayKeys(
+                for: response,
+                currentKey: .alphaNum("a"),
+                currentKeycode: 0x00,
+                leaderKeycode: Keycode.semicolon
+            ),
+            []
+        )
+    }
 }

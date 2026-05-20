@@ -29,11 +29,16 @@ enum EventHookError: Error, CustomStringConvertible {
 /// force every method call through awkward `MainActor.assumeIsolated` blocks.
 final class EventHook {
     private static let syntheticReplayMarker: Int64 = 0x534c_4950_4b45_5901
+    private static let maxReplayBatchKeyCount = 16
+    private static let maxQueuedReplayKeyCount = 64
 
     private var stateMachine: StateMachine
     private let leaderKeycode: UInt16
     private let onSwitch: (String) -> Void
     private let onLog: (String) -> Void
+
+    private let actionLock = NSLock()
+    private var queuedReplayKeyCount = 0
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
@@ -149,16 +154,20 @@ final class EventHook {
         let response = stateMachine.onKeydown(key)
 
         if let lang = response.switchTo {
-            onSwitch(lang)
+            enqueueSwitch(lang)
         }
 
-        for k in response.replay {
-            if let kc = Keycode.fromKey(k, leader: leaderKeycode) {
-                Self.synthPost(keycode: kc)
-            }
+        let replay = Self.replayKeys(
+            for: response,
+            currentKey: key,
+            currentKeycode: keycode,
+            leaderKeycode: leaderKeycode
+        )
+        if !replay.isEmpty {
+            enqueueReplay(replay)
         }
 
-        if response.suppress {
+        if response.suppress || Self.shouldSuppressCurrentEventForAsyncReplay(response: response, currentKey: key) {
             return nil  // drop the event
         }
         return Unmanaged.passUnretained(event)
@@ -172,12 +181,65 @@ final class EventHook {
         event.getIntegerValueField(.eventSourceUserData) == syntheticReplayMarker
     }
 
+    static func replayKeys(
+        for response: StateMachineResponse,
+        currentKey: HookKey,
+        currentKeycode: UInt16,
+        leaderKeycode: UInt16
+    ) -> [UInt16] {
+        var keys = response.replay.compactMap { Keycode.fromKey($0, leader: leaderKeycode) }
+        if shouldSuppressCurrentEventForAsyncReplay(response: response, currentKey: currentKey) {
+            keys.append(currentKeycode)
+        }
+        return keys
+    }
+
+    static func shouldSuppressCurrentEventForAsyncReplay(response: StateMachineResponse, currentKey: HookKey) -> Bool {
+        !response.suppress && !response.replay.isEmpty && currentKey != .other
+    }
+
     private static func eventKey(keycode: UInt16, flags: CGEventFlags, leader: UInt16) -> HookKey {
         let blocking: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand]
         if !flags.intersection(blocking).isEmpty {
             return .other
         }
         return Keycode.toKey(keycode, leader: leader)
+    }
+
+    private func enqueueSwitch(_ language: String) {
+        DispatchQueue.main.async { [weak self] in
+            self?.onSwitch(language)
+        }
+    }
+
+    private func enqueueReplay(_ keycodes: [UInt16]) {
+        let batch = Array(keycodes.prefix(Self.maxReplayBatchKeyCount))
+        guard !batch.isEmpty else { return }
+
+        actionLock.lock()
+        let wouldExceedLimit = queuedReplayKeyCount + batch.count > Self.maxQueuedReplayKeyCount
+        if !wouldExceedLimit {
+            queuedReplayKeyCount += batch.count
+        }
+        actionLock.unlock()
+
+        if wouldExceedLimit {
+            onLog("dropping replay batch because replay queue is full")
+            return
+        }
+
+        DispatchQueue.main.async { [weak self] in
+            for keycode in batch {
+                Self.synthPost(keycode: keycode)
+            }
+            self?.finishReplayBatch(count: batch.count)
+        }
+    }
+
+    private func finishReplayBatch(count: Int) {
+        actionLock.lock()
+        queuedReplayKeyCount = max(0, queuedReplayKeyCount - count)
+        actionLock.unlock()
     }
 
     /// Synth-post the given keycode at session level (not HID) so it doesn't
