@@ -1,4 +1,5 @@
 import XCTest
+import CoreGraphics
 @testable import SlipkeyApp
 
 final class EventHookTests: XCTestCase {
@@ -30,5 +31,16 @@ final class EventHookTests: XCTestCase {
         let src = try String(contentsOf: url, encoding: .utf8)
 
         XCTAssertTrue(src.contains(".filter { $0.enabled && !$0.prefix.isEmpty }"))
+    }
+
+    func test_synthetic_replay_marker_is_detected() throws {
+        guard let event = CGEvent(keyboardEventSource: nil, virtualKey: Keycode.semicolon, keyDown: true) else {
+            XCTFail("CGEvent should be creatable in tests")
+            return
+        }
+
+        XCTAssertFalse(EventHook.isSyntheticReplayEvent(event))
+        event.setIntegerValueField(.eventSourceUserData, value: 0x534c_4950_4b45_5901)
+        XCTAssertTrue(EventHook.isSyntheticReplayEvent(event))
     }
 }

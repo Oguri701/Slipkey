@@ -28,6 +28,8 @@ enum EventHookError: Error, CustomStringConvertible {
 /// `@convention(c)` function with no ambient actor; isolating the class would
 /// force every method call through awkward `MainActor.assumeIsolated` blocks.
 final class EventHook {
+    private static let syntheticReplayMarker: Int64 = 0x534c_4950_4b45_5901
+
     private var stateMachine: StateMachine
     private let leaderKeycode: UInt16
     private let onSwitch: (String) -> Void
@@ -111,6 +113,10 @@ final class EventHook {
             return Unmanaged.passUnretained(event)
         }
 
+        if EventHook.isSyntheticReplayEvent(event) {
+            return Unmanaged.passUnretained(event)
+        }
+
         guard type == .keyDown else { return Unmanaged.passUnretained(event) }
         return hook.handleKeyDown(event)
     }
@@ -162,6 +168,10 @@ final class EventHook {
         idle && key == .leader
     }
 
+    static func isSyntheticReplayEvent(_ event: CGEvent) -> Bool {
+        event.getIntegerValueField(.eventSourceUserData) == syntheticReplayMarker
+    }
+
     private static func eventKey(keycode: UInt16, flags: CGEventFlags, leader: UInt16) -> HookKey {
         let blocking: CGEventFlags = [.maskShift, .maskControl, .maskAlternate, .maskCommand]
         if !flags.intersection(blocking).isEmpty {
@@ -175,10 +185,16 @@ final class EventHook {
     private static func synthPost(keycode: UInt16) {
         guard let src = CGEventSource(stateID: .hidSystemState) else { return }
         if let down = CGEvent(keyboardEventSource: src, virtualKey: keycode, keyDown: true) {
+            markSyntheticReplay(down)
             down.post(tap: .cgSessionEventTap)
         }
         if let up = CGEvent(keyboardEventSource: src, virtualKey: keycode, keyDown: false) {
+            markSyntheticReplay(up)
             up.post(tap: .cgSessionEventTap)
         }
+    }
+
+    private static func markSyntheticReplay(_ event: CGEvent) {
+        event.setIntegerValueField(.eventSourceUserData, value: syntheticReplayMarker)
     }
 }
