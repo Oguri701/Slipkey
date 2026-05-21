@@ -30,6 +30,14 @@ pub struct MappingConfig {
     /// `None` for English, which uses alphanumeric mode without switching layout.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+}
+
+fn default_enabled() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -44,10 +52,15 @@ impl MappingConfig {
             language: entry.language.to_string(),
             prefix: entry.prefix.clone(),
             source: entry.hkl_id.clone(),
+            name: String::new(),
+            enabled: true,
         }
     }
 
     fn into_entry(self) -> Option<WinEntry> {
+        if !self.enabled {
+            return None;
+        }
         if self.language.len() != 2 {
             return None;
         }
@@ -281,6 +294,44 @@ source = "0000040C"
         let fr = mapping.entry_for(&Language::from("fr")).unwrap();
         assert_eq!(fr.hkl_id.as_deref(), Some("0000040C"));
         assert_eq!(fr.mode, WinImeMode::LayoutOnly);
+    }
+
+    #[test]
+    fn disabled_mapping_is_not_active() {
+        let mapping = toml::from_str::<Config>(
+            r#"
+leader = ";"
+
+[[mappings]]
+language = "fr"
+prefix = "fr"
+source = "0000040C"
+enabled = false
+"#,
+        )
+        .unwrap()
+        .into_mapping();
+        assert!(mapping.entry_for(&Language::from("fr")).is_none());
+    }
+
+    #[test]
+    fn mapping_metadata_round_trips() {
+        let config = toml::from_str::<Config>(
+            r#"
+leader = ";"
+
+[[mappings]]
+language = "fr"
+prefix = "fr"
+source = "0000040C"
+name = "French"
+enabled = true
+"#,
+        )
+        .unwrap();
+        let row = config.mappings.unwrap().remove(0);
+        assert_eq!(row.name, "French");
+        assert!(row.enabled);
     }
 
     #[test]

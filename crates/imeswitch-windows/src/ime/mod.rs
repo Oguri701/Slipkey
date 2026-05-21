@@ -272,9 +272,12 @@ mod tests {
     #[test]
     fn source_info_has_name_and_language() {
         let s = SourceInfo {
+            platform: "windows".to_string(),
             id: "00000411".to_string(),
             name: "Japanese".to_string(),
+            raw_language: "0411".to_string(),
             language: "ja".to_string(),
+            is_selectable: true,
         };
         assert_eq!(s.language, "ja");
         assert_eq!(s.name, "Japanese");

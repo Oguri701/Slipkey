@@ -443,9 +443,15 @@ pub fn language_label(language: &str) -> &'static str {
 
 pub fn mapping_language_label(language: &str) -> String {
     match language {
+        "en" => "English".to_string(),
         "zh" => "中文".to_string(),
         "ja" => "日本語".to_string(),
-        "en" => "English".to_string(),
+        "ko" => "한국어".to_string(),
+        "fr" => "Français".to_string(),
+        "de" => "Deutsch".to_string(),
+        "es" => "Español".to_string(),
+        "it" => "Italiano".to_string(),
+        "ru" => "Русский".to_string(),
         other => other.to_string(),
     }
 }

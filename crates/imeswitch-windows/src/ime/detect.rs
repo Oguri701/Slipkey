@@ -5,9 +5,12 @@
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceInfo {
+    pub platform: String,
     pub id: String,
     pub name: String,
+    pub raw_language: String,
     pub language: String,
+    pub is_selectable: bool,
 }
 
 #[cfg(target_os = "windows")]
@@ -55,12 +58,17 @@ pub fn list_all_sources() -> Vec<SourceInfo> {
         .map(|hkl| {
             let id = super::layout::format_hkl(hkl);
             let langid = (hkl as usize & 0xFFFF) as u32;
+            let language = langid_to_iso(langid);
             SourceInfo {
+                platform: "windows".to_string(),
                 id,
                 name: locale_language_name(langid),
-                language: langid_to_iso(langid),
+                raw_language: format!("{langid:04X}"),
+                language,
+                is_selectable: true,
             }
         })
+        .filter(|source| is_supported_language(&source.language))
         .collect()
 }
 
@@ -69,14 +77,11 @@ pub fn list_all_sources() -> Vec<SourceInfo> {
     Vec::new()
 }
 
-/// Returns installed CJK keyboard layouts (Japanese and Chinese only).
-/// English does not require HKL detection in the Windows model — `;en`
-/// switches the current CJK IME to alphanumeric mode without changing layout.
+/// Returns installed keyboard layouts that Slipkey can map to standard
+/// language prefixes. The old name is kept because the Windows UI already
+/// calls it as its "Detect" action.
 pub fn detect_default_sources() -> Vec<SourceInfo> {
     list_all_sources()
-        .into_iter()
-        .filter(|s| matches!(s.language.as_str(), "ja" | "zh"))
-        .collect()
 }
 
 pub fn is_cjk_langid(langid: u32) -> bool {
@@ -90,14 +95,31 @@ fn langid_to_iso(langid: u32) -> String {
         0x0411 => "ja".to_string(),
         0x0412 => "ko".to_string(),
         0x0804 | 0x0404 | 0x0C04 | 0x1404 => "zh".to_string(),
+        0x040C => "fr".to_string(),
+        0x0407 => "de".to_string(),
+        0x0C0A | 0x040A => "es".to_string(),
+        0x0410 => "it".to_string(),
+        0x0419 => "ru".to_string(),
         other => match primary_langid(other) {
             0x09 => "en".to_string(),
             0x11 => "ja".to_string(),
             0x12 => "ko".to_string(),
             0x04 => "zh".to_string(),
+            0x0C => "fr".to_string(),
+            0x07 => "de".to_string(),
+            0x0A => "es".to_string(),
+            0x10 => "it".to_string(),
+            0x19 => "ru".to_string(),
             _ => format!("{:04X}", langid),
         },
     }
+}
+
+fn is_supported_language(language: &str) -> bool {
+    matches!(
+        language,
+        "en" | "ja" | "zh" | "ko" | "fr" | "de" | "es" | "it" | "ru"
+    )
 }
 
 fn primary_langid(langid: u32) -> u32 {
@@ -136,5 +158,16 @@ mod tests {
         assert!(is_cjk_langid(0x0C04)); // Chinese Hong Kong
         assert!(is_cjk_langid(0x0412)); // Korean
         assert!(!is_cjk_langid(0x0409)); // English
+    }
+
+    #[test]
+    fn common_langids_normalize_to_short_codes() {
+        assert_eq!(langid_to_iso(0x0409), "en");
+        assert_eq!(langid_to_iso(0x0411), "ja");
+        assert_eq!(langid_to_iso(0x0804), "zh");
+        assert_eq!(langid_to_iso(0x0412), "ko");
+        assert_eq!(langid_to_iso(0x040C), "fr");
+        assert_eq!(langid_to_iso(0x0407), "de");
+        assert_eq!(langid_to_iso(0x0C0A), "es");
     }
 }
