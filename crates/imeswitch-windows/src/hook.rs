@@ -275,10 +275,8 @@ fn handle_keydown(vk: u32, scan_code: u32, flags: u32) -> Result<bool, HookError
         (response, replay_keys, switcher_arc)
     };
 
-    if let Some(ref lang) = response.switch {
-        if let Err(error) = switcher_arc.lock().unwrap().switch_to(lang) {
-            log::error!("switch failed: {}", error);
-        }
+    if let Some(lang) = response.switch.clone() {
+        schedule_switch(switcher_arc.clone(), lang);
     }
 
     for replay_key in replay_keys {
@@ -286,6 +284,21 @@ fn handle_keydown(vk: u32, scan_code: u32, flags: u32) -> Result<bool, HookError
     }
 
     Ok(response.suppress)
+}
+
+fn schedule_switch(switcher: Arc<Mutex<WindowsImeSwitcher>>, lang: Language) {
+    std::thread::spawn(move || {
+        let repeat_switch = lang.as_str() != "en";
+        if let Err(error) = switcher.lock().unwrap().switch_to(&lang) {
+            log::error!("repeated switch failed: {}", error);
+        }
+        if repeat_switch {
+            std::thread::sleep(Duration::from_millis(120));
+            if let Err(error) = switcher.lock().unwrap().switch_to(&lang) {
+                log::error!("repeated switch failed: {}", error);
+            }
+        }
+    });
 }
 
 fn update_pending_replay(

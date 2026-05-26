@@ -109,6 +109,56 @@ pub fn switch_layout_sync(
     Ok(())
 }
 
+/// Wait briefly until the focused thread reports the requested layout.
+///
+/// Some IMEs apply `WM_INPUTLANGCHANGEREQUEST` in more than one step. Slipkey
+/// writes TSF conversion compartments after switching HKL; if that write races
+/// the layout transition, Native mode can be applied to the previous IME and
+/// the newly-selected CJK IME remains in its old alphanumeric state.
+#[cfg(target_os = "windows")]
+pub fn wait_for_layout(
+    hwnd: windows_sys::Win32::Foundation::HWND,
+    expected: windows_sys::Win32::UI::Input::KeyboardAndMouse::HKL,
+    timeout: std::time::Duration,
+) -> bool {
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::GetKeyboardLayout;
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowThreadProcessId;
+
+    if hwnd.is_null() {
+        return false;
+    }
+
+    let thread_id = unsafe { GetWindowThreadProcessId(hwnd, std::ptr::null_mut()) };
+    if thread_id == 0 {
+        return false;
+    }
+
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let current = unsafe { GetKeyboardLayout(thread_id) };
+        if hkl_matches(current, expected) {
+            return true;
+        }
+        if std::time::Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn hkl_matches(
+    current: windows_sys::Win32::UI::Input::KeyboardAndMouse::HKL,
+    expected: windows_sys::Win32::UI::Input::KeyboardAndMouse::HKL,
+) -> bool {
+    if current.is_null() {
+        return false;
+    }
+    let current_id = (current as usize) as u32;
+    let expected_id = (expected as usize) as u32;
+    current_id == expected_id || (current_id & 0xFFFF) == (expected_id & 0xFFFF)
+}
+
 /// Broadcast a layout change to all top-level windows asynchronously.
 /// This updates the taskbar IME indicator and notifies other applications.
 #[cfg(target_os = "windows")]

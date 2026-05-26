@@ -105,7 +105,7 @@ pub fn merge_detected_sources(mut config: Config, sources: &[SourceInfo]) -> Con
                 .unwrap_or_else(|| language.to_ascii_lowercase()),
             source,
             name,
-            enabled: existing_entry.map(|entry| entry.enabled).unwrap_or(true),
+            enabled: true,
         });
     }
 

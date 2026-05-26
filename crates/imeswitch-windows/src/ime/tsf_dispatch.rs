@@ -10,7 +10,6 @@ use crate::ime::WinImeMode;
 pub const TF_CONVERSIONMODE_ALPHANUMERIC: u32 = 0x0000;
 pub const TF_CONVERSIONMODE_NATIVE: u32 = 0x0001;
 pub const TF_CONVERSIONMODE_FULLSHAPE: u32 = 0x0008;
-pub const TF_CONVERSIONMODE_ROMAN: u32 = 0x0010;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TsfTarget {
@@ -30,12 +29,9 @@ impl TsfTarget {
             }),
             WinImeMode::Native => Some(Self {
                 conversion_mode: match language {
-                    // Japanese needs full-shape + Roman input style for "ja kana via romaji".
-                    "ja" => {
-                        TF_CONVERSIONMODE_NATIVE
-                            | TF_CONVERSIONMODE_FULLSHAPE
-                            | TF_CONVERSIONMODE_ROMAN
-                    }
+                    // Japanese Hiragana mode is native + full-shape. Do not set
+                    // ROMAN; in TSF that flag suppresses IME conversion.
+                    "ja" => TF_CONVERSIONMODE_NATIVE | TF_CONVERSIONMODE_FULLSHAPE,
                     // Chinese/Korean: just native. No full-shape forcing.
                     _ => TF_CONVERSIONMODE_NATIVE,
                 },
@@ -332,11 +328,11 @@ mod tests {
     }
 
     #[test]
-    fn native_japanese_uses_native_fullshape_roman() {
+    fn native_japanese_uses_native_fullshape_without_roman() {
         let t = TsfTarget::for_mode(WinImeMode::Native, "ja").unwrap();
         assert_eq!(
             t.conversion_mode,
-            TF_CONVERSIONMODE_NATIVE | TF_CONVERSIONMODE_FULLSHAPE | TF_CONVERSIONMODE_ROMAN
+            TF_CONVERSIONMODE_NATIVE | TF_CONVERSIONMODE_FULLSHAPE
         );
         assert!(t.open_status);
     }

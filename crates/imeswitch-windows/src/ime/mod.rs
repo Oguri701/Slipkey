@@ -216,13 +216,49 @@ fn switch_entry(entry: &WinEntry) -> Result<(), SwitchError> {
         let hwnd = layout::focused_window();
         let hkl = layout::load_or_find_layout(hkl_id)?;
         layout::switch_layout_sync(hwnd, hkl)?;
+        if matches!(entry.mode, WinImeMode::Native)
+            && !layout::wait_for_layout(hwnd, hkl, std::time::Duration::from_millis(160))
+        {
+            log::warn!(
+                "target HKL {} was not observed before TSF native-mode write; continuing",
+                hkl_id
+            );
+        }
         layout::broadcast_layout_change(hkl);
     }
 
     // Step 2: TSF Compartment write (Native / Alphanumeric only).
     if let Some(target) = tsf_dispatch::TsfTarget::for_mode(entry.mode, entry.language.as_str()) {
-        if let Some(dispatcher) = tsf_dispatch::global() {
-            if let Err(e) = dispatcher.dispatch(target) {
+        dispatch_tsf(entry, target);
+    }
+
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn dispatch_tsf(entry: &WinEntry, target: tsf_dispatch::TsfTarget) {
+    let Some(dispatcher) = tsf_dispatch::global() else {
+        return;
+    };
+
+    let mut attempt = 0;
+    loop {
+        attempt += 1;
+        match dispatcher.dispatch(target) {
+            Ok(()) => return,
+            Err(e) => {
+                let should_retry = matches!(entry.mode, WinImeMode::Native) && attempt == 1;
+                if should_retry {
+                    log::warn!(
+                        "TSF dispatch failed for lang={} mode={:?}: {:?}; retrying once",
+                        entry.language.as_str(),
+                        entry.mode,
+                        e
+                    );
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                    continue;
+                }
+
                 // Silent by design (decision D6): log and move on.
                 log::warn!(
                     "TSF dispatch failed for lang={} mode={:?}: {:?}",
@@ -230,11 +266,10 @@ fn switch_entry(entry: &WinEntry) -> Result<(), SwitchError> {
                     entry.mode,
                     e
                 );
+                return;
             }
         }
     }
-
-    Ok(())
 }
 
 #[cfg(not(target_os = "windows"))]
