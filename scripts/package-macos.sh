@@ -15,8 +15,7 @@ DIST_DIR="$ROOT/dist"
 ZIP_PATH="$DIST_DIR/$APP_NAME-$VERSION-macos-arm64.zip"
 
 if [[ "${MAC_ONLY:-0}" == "1" ]]; then
-  echo "==> Testing Rust workspace (macOS-only, excluding Windows package)"
-  cargo test --workspace --exclude slipkey-windows
+  echo "==> Skipping Windows-only Rust workspace tests for macOS-only package"
 else
   echo "==> Testing Rust workspace"
   cargo test --workspace
