@@ -3,6 +3,21 @@ import CoreGraphics
 @testable import SlipkeyApp
 
 final class EventHookTests: XCTestCase {
+    func test_event_tap_uses_a_dedicated_thread_and_never_drops_replay_batches() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/SlipkeyApp/Hook/EventHook.swift")
+        let src = try String(contentsOf: url, encoding: .utf8)
+
+        XCTAssertTrue(src.contains("Thread {"))
+        XCTAssertTrue(src.contains("CFRunLoopRun()"))
+        XCTAssertFalse(src.contains("DispatchQueue.main.async { [weak self] in\n            for keycode in batch"))
+        XCTAssertFalse(src.contains("dropping replay batch"))
+        XCTAssertFalse(src.contains("maxQueuedReplayKeyCount"))
+    }
+
     func test_composition_probe_only_runs_for_idle_leader_key() {
         XCTAssertTrue(EventHook.shouldInspectComposition(idle: true, key: .leader))
         XCTAssertFalse(EventHook.shouldInspectComposition(idle: true, key: .alphaNum("e")))

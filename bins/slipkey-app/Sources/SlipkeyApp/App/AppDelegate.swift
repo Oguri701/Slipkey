@@ -32,6 +32,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard !isDuplicateInstance else { return }
 
+        DiagnosticLogger.shared.log("app.launch", fields: [
+            "app_version": Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "<none>",
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString
+        ])
+
         let statusItemManager = self.statusItemManager
         DistributedNotificationCenter.default().addObserver(
             self,

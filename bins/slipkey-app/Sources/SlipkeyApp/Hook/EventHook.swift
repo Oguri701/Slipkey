@@ -16,32 +16,33 @@ enum EventHookError: Error, CustomStringConvertible {
     }
 }
 
-/// Installs a HID-level keydown tap on the current thread's CFRunLoop and
+/// Installs a HID-level keydown tap on a dedicated thread and CFRunLoop and
 /// drives the trigger state machine for every keydown.
 ///
 /// Lifetime: keep the EventHook instance alive for as long as the hook is
 /// installed. `deinit` removes the run-loop source and invalidates the port.
 ///
-/// Threading: every call site (install, uninstall, the C callback) runs on the
-/// main thread because the tap's run-loop source is added to the main run loop.
-/// We don't mark this class `@MainActor` because the C callback is a static
-/// `@convention(c)` function with no ambient actor; isolating the class would
-/// force every method call through awkward `MainActor.assumeIsolated` blocks.
+/// Threading: the state machine and callback are confined to the hook thread.
+/// UI work is dispatched through the closures supplied by HookService, while
+/// synthetic replay is serialized on a separate queue after the callback exits.
 final class EventHook {
     private static let syntheticReplayMarker: Int64 = 0x534c_4950_4b45_5901
-    private static let maxReplayBatchKeyCount = 16
-    private static let maxQueuedReplayKeyCount = 64
 
     private var stateMachine: StateMachine
     private let leaderKeycode: UInt16
     private let onSwitch: (String) -> Void
     private let onLog: (String) -> Void
 
-    private let actionLock = NSLock()
-    private var queuedReplayKeyCount = 0
+    private let replayQueue = DispatchQueue(label: "dev.zlb.imeswitch.replay", qos: .userInteractive)
+    private let lifecycleLock = NSLock()
+    private let started = DispatchSemaphore(value: 0)
+    private let stopped = DispatchSemaphore(value: 0)
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
+    private var hookRunLoop: CFRunLoop?
+    private var hookThread: Thread?
+    private var startupError: Error?
 
     init(
         leaderKeycode: UInt16,
@@ -56,6 +57,27 @@ final class EventHook {
     }
 
     func install() throws {
+        let thread = Thread { [weak self] in
+            self?.runHookThread()
+        }
+        thread.name = "Slipkey EventTap"
+
+        lifecycleLock.lock()
+        hookThread = thread
+        lifecycleLock.unlock()
+        thread.start()
+        started.wait()
+
+        lifecycleLock.lock()
+        let error = startupError
+        let installed = tap != nil
+        lifecycleLock.unlock()
+
+        if let error { throw error }
+        if !installed { throw EventHookError.tapCreationFailed }
+    }
+
+    private func runHookThread() {
         let mask: CGEventMask = 1 << CGEventType.keyDown.rawValue
         let info = Unmanaged.passUnretained(self).toOpaque()
 
@@ -67,43 +89,69 @@ final class EventHook {
             callback: Self.tapCallback,
             userInfo: info
         ) else {
-            throw EventHookError.tapCreationFailed
+            reportStartupFailure(.tapCreationFailed)
+            return
         }
         guard let src = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0) else {
             CFMachPortInvalidate(tap)
-            throw EventHookError.runLoopSourceFailed
+            reportStartupFailure(.runLoopSourceFailed)
+            return
         }
-        CFRunLoopAddSource(CFRunLoopGetCurrent(), src, .commonModes)
-        CGEvent.tapEnable(tap: tap, enable: true)
+
+        let runLoop = CFRunLoopGetCurrent()
+        lifecycleLock.lock()
         self.tap = tap
-        self.runLoopSource = src
+        runLoopSource = src
+        hookRunLoop = runLoop
+        lifecycleLock.unlock()
+
+        CFRunLoopAddSource(runLoop, src, .commonModes)
+        CGEvent.tapEnable(tap: tap, enable: true)
+        started.signal()
+        CFRunLoopRun()
+
+        CGEvent.tapEnable(tap: tap, enable: false)
+        CFRunLoopRemoveSource(runLoop, src, .commonModes)
+        CFMachPortInvalidate(tap)
+
+        lifecycleLock.lock()
+        self.tap = nil
+        runLoopSource = nil
+        hookRunLoop = nil
+        hookThread = nil
+        lifecycleLock.unlock()
+        stopped.signal()
+    }
+
+    private func reportStartupFailure(_ error: EventHookError) {
+        lifecycleLock.lock()
+        startupError = error
+        hookThread = nil
+        lifecycleLock.unlock()
+        started.signal()
     }
 
     func uninstall() {
-        if let src = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), src, .commonModes)
-            self.runLoopSource = nil
+        lifecycleLock.lock()
+        let runLoop = hookRunLoop
+        lifecycleLock.unlock()
+        guard let runLoop else { return }
+
+        CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) {
+            CFRunLoopStop(runLoop)
         }
-        if let tap = tap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            CFMachPortInvalidate(tap)
-            self.tap = nil
-        }
+        CFRunLoopWakeUp(runLoop)
+        stopped.wait()
     }
 
     var isEnabled: Bool {
-        guard let tap else { return false }
-        return CGEvent.tapIsEnabled(tap: tap)
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        return tap.map { CGEvent.tapIsEnabled(tap: $0) } ?? false
     }
 
     deinit {
-        if let src = runLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetCurrent(), src, .commonModes)
-        }
-        if let tap = tap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            CFMachPortInvalidate(tap)
-        }
+        uninstall()
     }
 
     // MARK: - C-style callback
@@ -114,7 +162,7 @@ final class EventHook {
 
         // Re-enable the tap if the system disabled it (timeout / user input switch).
         if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
-            if let tap = hook.tap { CGEvent.tapEnable(tap: tap, enable: true) }
+            hook.reenableTap()
             return Unmanaged.passUnretained(event)
         }
 
@@ -124,6 +172,13 @@ final class EventHook {
 
         guard type == .keyDown else { return Unmanaged.passUnretained(event) }
         return hook.handleKeyDown(event)
+    }
+
+    private func reenableTap() {
+        lifecycleLock.lock()
+        let tap = self.tap
+        lifecycleLock.unlock()
+        if let tap { CGEvent.tapEnable(tap: tap, enable: true) }
     }
 
     private func handleKeyDown(_ event: CGEvent) -> Unmanaged<CGEvent>? {
@@ -213,33 +268,12 @@ final class EventHook {
     }
 
     private func enqueueReplay(_ keycodes: [UInt16]) {
-        let batch = Array(keycodes.prefix(Self.maxReplayBatchKeyCount))
-        guard !batch.isEmpty else { return }
-
-        actionLock.lock()
-        let wouldExceedLimit = queuedReplayKeyCount + batch.count > Self.maxQueuedReplayKeyCount
-        if !wouldExceedLimit {
-            queuedReplayKeyCount += batch.count
-        }
-        actionLock.unlock()
-
-        if wouldExceedLimit {
-            onLog("dropping replay batch because replay queue is full")
-            return
-        }
-
-        DispatchQueue.main.async { [weak self] in
-            for keycode in batch {
+        guard !keycodes.isEmpty else { return }
+        replayQueue.async {
+            for keycode in keycodes {
                 Self.synthPost(keycode: keycode)
             }
-            self?.finishReplayBatch(count: batch.count)
         }
-    }
-
-    private func finishReplayBatch(count: Int) {
-        actionLock.lock()
-        queuedReplayKeyCount = max(0, queuedReplayKeyCount - count)
-        actionLock.unlock()
     }
 
     /// Synth-post the given keycode at session level (not HID) so it doesn't

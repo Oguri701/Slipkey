@@ -14,6 +14,10 @@ enum AccessibilityMonitorAction: Equatable {
         }
         return .none
     }
+
+    static func shouldContinueMonitoring(isTrusted: Bool, hookRunning: Bool) -> Bool {
+        !isTrusted || !hookRunning
+    }
 }
 
 @MainActor
@@ -94,8 +98,11 @@ final class AppState: ObservableObject {
                 guard let self else { return }
 
                 self.refreshAccessibilityStatus()
-                let interval: UInt64 = self.accessibilityGranted ? 5_000_000_000 : 500_000_000
-                try? await Task.sleep(nanoseconds: interval)
+                guard AccessibilityMonitorAction.shouldContinueMonitoring(
+                    isTrusted: self.accessibilityGranted,
+                    hookRunning: self.hook.isRunning
+                ) else { return }
+                try? await Task.sleep(nanoseconds: 500_000_000)
             }
         }
     }

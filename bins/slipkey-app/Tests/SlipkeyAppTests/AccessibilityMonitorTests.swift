@@ -2,6 +2,12 @@ import XCTest
 @testable import SlipkeyApp
 
 final class AccessibilityMonitorTests: XCTestCase {
+    func test_monitor_only_continues_while_permission_or_hook_is_unavailable() {
+        XCTAssertTrue(AccessibilityMonitorAction.shouldContinueMonitoring(isTrusted: false, hookRunning: false))
+        XCTAssertTrue(AccessibilityMonitorAction.shouldContinueMonitoring(isTrusted: true, hookRunning: false))
+        XCTAssertFalse(AccessibilityMonitorAction.shouldContinueMonitoring(isTrusted: true, hookRunning: true))
+    }
+
     func test_revoked_permission_stops_running_hook() {
         XCTAssertEqual(
             AccessibilityMonitorAction.resolve(wasGranted: true, isTrusted: false, hookRunning: true),
