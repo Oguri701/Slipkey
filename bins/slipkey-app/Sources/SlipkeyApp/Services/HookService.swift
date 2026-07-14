@@ -48,9 +48,14 @@ final class HookService {
             try hook.install()
             self.hook = hook
             NSLog("Slipkey: hook installed (leader=%@, mappings=%d)", String(leaderChar), mappings.count)
+            DiagnosticLogger.shared.log("hook.install", fields: ["result": "success"])
             return true
         } catch {
             NSLog("Slipkey: hook install failed: %@", String(describing: error))
+            DiagnosticLogger.shared.log("hook.install", fields: [
+                "error": String(describing: error),
+                "result": "failure"
+            ])
             return false
         }
     }
