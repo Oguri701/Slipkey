@@ -77,10 +77,12 @@ enum IMEManager {
         }
     }
 
-    /// Lists every input source the system reports (enabled or not).
-    /// Used by SettingsView to populate the IME picker.
-    static func listAll() -> [TISSourceInfo] {
-        guard let listRef = TISCreateInputSourceList(nil, true) else { return [] }
+    /// Lists only input sources currently enabled in System Settings.
+    /// Asking TIS for all installed sources and checking the `isEnabled`
+    /// property is unreliable because that property can remain stale after a
+    /// source is removed from the user's input menu.
+    static func listEnabled() -> [TISSourceInfo] {
+        guard let listRef = TISCreateInputSourceList(nil, false) else { return [] }
         let list = listRef.takeRetainedValue() as NSArray
         return list.compactMap { item -> TISSourceInfo? in
             let src = item as! TISInputSource

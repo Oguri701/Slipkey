@@ -3,7 +3,7 @@ import Foundation
 struct InputSourceService {
     func discover() -> [InputSource] {
         var result: [InputSource] = []
-        for src in IMEManager.listAll() {
+        for src in IMEManager.listEnabled() {
             guard isRealTypingSource(src.type),
                   src.category == "TISCategoryKeyboardInputSource",
                   src.isEnabled,

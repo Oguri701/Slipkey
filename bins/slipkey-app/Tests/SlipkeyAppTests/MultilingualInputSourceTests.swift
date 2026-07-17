@@ -2,6 +2,18 @@ import XCTest
 @testable import SlipkeyApp
 
 final class MultilingualInputSourceTests: XCTestCase {
+    func test_detection_queries_only_currently_enabled_system_sources() throws {
+        let url = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/SlipkeyApp/Hook/IMEManager.swift")
+        let source = try String(contentsOf: url, encoding: .utf8)
+
+        XCTAssertTrue(source.contains("TISCreateInputSourceList(nil, false)"))
+        XCTAssertFalse(source.contains("TISCreateInputSourceList(nil, true)"))
+    }
+
     func test_macos_language_tags_normalize_to_supported_language_codes() {
         XCTAssertEqual(InputSourceService.normalizedLanguage("en-US"), "en")
         XCTAssertEqual(InputSourceService.normalizedLanguage("ja-JP"), "ja")
@@ -47,7 +59,7 @@ final class MultilingualInputSourceTests: XCTestCase {
         XCTAssertEqual(merged.mappings.first?.name, "Shuangpin")
     }
 
-    func test_detection_keeps_unavailable_selected_source_visible_and_recoverable() {
+    func test_detection_removes_languages_missing_from_system_sources() {
         let existing = SlipkeyConfig(
             leader: ";",
             mappings: [
@@ -59,11 +71,41 @@ final class MultilingualInputSourceTests: XCTestCase {
             InputSource(language: "en", sourceID: "com.apple.keylayout.ABC", name: "ABC", rawLanguage: "en-US", isSelectable: true)
         ])
 
-        let french = merged.mappings.first { $0.language == "fr" }
-        XCTAssertEqual(french?.prefix, "ff")
-        XCTAssertEqual(french?.source, "missing.french.source")
-        XCTAssertEqual(french?.name, "Old French")
-        XCTAssertEqual(french?.enabled, false)
+        XCTAssertEqual(merged.mappings.map(\.language), ["en"])
+        XCTAssertNil(merged.mappings.first { $0.language == "fr" })
+    }
+
+    func test_readded_language_uses_defaults_instead_of_removed_configuration() {
+        let existing = SlipkeyConfig(
+            leader: ";",
+            mappings: [
+                MappingEntry(language: "ko", prefix: "old", source: "missing.korean.source", name: "Old Korean", enabled: false)
+            ]
+        )
+        let english = InputSource(
+            language: "en",
+            sourceID: "com.apple.keylayout.ABC",
+            name: "ABC",
+            rawLanguage: "en-US",
+            isSelectable: true
+        )
+        let afterRemoval = existing.mergingDetectedSources([english])
+        let readded = afterRemoval.mergingDetectedSources([
+            english,
+            InputSource(
+                language: "ko",
+                sourceID: "com.apple.inputmethod.Korean.2SetKorean",
+                name: "2-Set Korean",
+                rawLanguage: "ko-KR",
+                isSelectable: true
+            )
+        ])
+
+        let korean = readded.mappings.first { $0.language == "ko" }
+        XCTAssertEqual(korean?.prefix, "ko")
+        XCTAssertEqual(korean?.source, "com.apple.inputmethod.Korean.2SetKorean")
+        XCTAssertEqual(korean?.name, "2-Set Korean")
+        XCTAssertEqual(korean?.enabled, true)
     }
 
     func test_detection_dedupes_same_language_same_display_name_but_keeps_distinct_chinese_sources() {

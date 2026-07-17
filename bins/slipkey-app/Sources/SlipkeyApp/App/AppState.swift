@@ -117,7 +117,17 @@ final class AppState: ObservableObject {
         if detectedSources.isEmpty {
             return
         }
-        config = config.mergingDetectedSources(detectedSources)
+        let synchronized = config.mergingDetectedSources(detectedSources)
+        guard synchronized != config else { return }
+        config = synchronized
+        do {
+            try ConfigStore.save(config)
+            if hook.isRunning {
+                hook.restart(with: config)
+            }
+        } catch {
+            statusMessage = error.localizedDescription
+        }
     }
 
     func saveAndRestart() {

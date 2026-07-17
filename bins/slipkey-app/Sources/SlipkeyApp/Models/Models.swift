@@ -100,9 +100,8 @@ struct SlipkeyConfig: Hashable {
     func mergingDetectedSources(_ sources: [InputSource]) -> SlipkeyConfig {
         let selectableSources = sources.filter(\.isSelectable)
         guard !selectableSources.isEmpty else { return self }
-        let existingLanguages = Set(mappings.map(\.language))
         let detectedLanguages = Set(selectableSources.map(\.language))
-        let languages = Array(existingLanguages.union(detectedLanguages)).sorted()
+        let languages = detectedLanguages.sorted()
 
         let rows = languages.map { language -> MappingEntry in
             let candidates = selectableSources.filter { $0.language == language }
@@ -110,13 +109,17 @@ struct SlipkeyConfig: Hashable {
             let selected = preferredSource(for: language, candidates: candidates, existing: existing)
             return MappingEntry(
                 language: language,
-                prefix: existing?.prefix ?? language.lowercased(),
-                source: selected?.sourceID ?? existing?.source ?? "",
-                name: selected?.name ?? existing?.name ?? "",
+                prefix: existing?.prefix ?? Self.defaultPrefix(for: language),
+                source: selected?.sourceID ?? "",
+                name: selected?.name ?? "",
                 enabled: existing?.enabled ?? true
             )
         }
         return SlipkeyConfig(leader: leader, mappings: rows)
+    }
+
+    private static func defaultPrefix(for language: String) -> String {
+        defaults().mappings.first { $0.language == language }?.prefix ?? language.lowercased()
     }
 
     private func preferredSource(for language: String, candidates: [InputSource], existing: MappingEntry?) -> InputSource? {
